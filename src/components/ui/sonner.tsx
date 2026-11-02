@@ -16,7 +16,9 @@ const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
       theme={theme as ToasterProps['theme']}
-      className="toaster group"
+      // Below lg, clear the tab bar, its border and safe area with a 1rem gap.
+      className="toaster group
+        max-lg:data-[y-position=bottom]:bottom-[calc(5rem+1px+env(safe-area-inset-bottom))]!"
       icons={{
         success: <CircleCheckIcon className="size-4" />,
         info: <InfoIcon className="size-4" />,

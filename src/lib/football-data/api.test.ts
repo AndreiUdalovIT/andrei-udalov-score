@@ -7,6 +7,7 @@ import { FootballDataHttpError } from './client';
 import fixture from './fixtures/competition-teams.json';
 import matchFixture from './fixtures/matches.json';
 import scorersFixture from './fixtures/scorers.json';
+import squadFixture from './fixtures/squad.json';
 import standingsFixture from './fixtures/standings.json';
 
 vi.mock('server-only', () => ({}));
@@ -688,5 +689,85 @@ describe('getCompetitionScorers', () => {
     await expect(api.getCompetitionScorers('PL')).rejects.toBeInstanceOf(
       FootballDataHttpError,
     );
+  });
+});
+
+describe('getTeamSquad', () => {
+  it('loads and validates the current squad for the requested team', async () => {
+    fetchMock.mockResolvedValue(Response.json(squadFixture.arsenal));
+    const api = createFootballDataApi({ token: TOKEN });
+
+    const result = await api.getTeamSquad(57);
+
+    expect(result).toEqual(squadFixture.arsenal);
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL('https://api.football-data.org/v4/teams/57'),
+      expect.any(Object),
+    );
+  });
+
+  it('accepts an empty squad', async () => {
+    fetchMock.mockResolvedValue(
+      Response.json({ ...squadFixture.arsenal, squad: [] }),
+    );
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getTeamSquad(57)).resolves.toMatchObject({
+      id: 57,
+      squad: [],
+    });
+  });
+
+  it('rejects another team even when its squad is empty', async () => {
+    fetchMock.mockResolvedValue(
+      Response.json({ ...squadFixture.clubBrugge, squad: [] }),
+    );
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getTeamSquad(57)).rejects.toMatchObject({
+      name: 'FootballDataValidationError',
+      issues: [{ code: 'custom', path: ['id'] }],
+    });
+  });
+
+  it('reports a malformed squad through the shared validation error', async () => {
+    fetchMock.mockResolvedValue(
+      Response.json({ ...squadFixture.arsenal, squad: null }),
+    );
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getTeamSquad(57)).rejects.toMatchObject({
+      name: 'FootballDataValidationError',
+      resource: 'teams/57',
+      issues: [{ code: 'invalid_type', path: ['squad'] }],
+    });
+  });
+
+  it.each([0, 1.5])(
+    'rejects an invalid team ID %s before making a request',
+    async (teamId) => {
+      const api = createFootballDataApi({ token: TOKEN });
+
+      await expect(api.getTeamSquad(teamId)).rejects.toThrow(RangeError);
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it('forwards cancellation to the HTTP client', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(
+      api.getTeamSquad(57, { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves HTTP errors', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 403 }));
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getTeamSquad(57)).rejects.toBeInstanceOf(FootballDataHttpError);
   });
 });

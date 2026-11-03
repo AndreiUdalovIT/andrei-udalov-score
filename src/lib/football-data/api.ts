@@ -12,6 +12,7 @@ import {
 } from './schemas/matches';
 import { scorersResponseSchema, type ApiScorersResponse } from './schemas/scorers';
 import { competitionSchema } from './schemas/shared';
+import { squadResponseSchema, type ApiSquadResponse } from './schemas/squad';
 import {
   standingsResponseSchema,
   type ApiStandingsResponse,
@@ -33,6 +34,10 @@ type CompetitionMatchesOptions = CompetitionOptions & {
 
 type CompetitionScorersOptions = CompetitionOptions & {
   limit?: number;
+};
+
+type TeamSquadOptions = {
+  signal?: AbortSignal;
 };
 
 function normalizeCompetitionCode(competitionCode: string) {
@@ -234,6 +239,27 @@ export function createFootballDataApi(options: ClientOptions = {}) {
             Number(response.season.startDate.slice(0, 4)) === season,
           { path: ['season', 'startDate'], message: 'Unexpected season' },
         );
+      const result = schema.safeParse(data);
+      if (!result.success) {
+        throw new FootballDataValidationError(resource, result.error);
+      }
+      return result.data;
+    },
+
+    async getTeamSquad(
+      teamId: number,
+      { signal }: TeamSquadOptions = {},
+    ): Promise<ApiSquadResponse> {
+      if (!Number.isSafeInteger(teamId) || teamId < 1) {
+        throw new RangeError('teamId must be a positive safe integer');
+      }
+
+      const resource = `teams/${teamId}`;
+      const data = await client.get(resource, { signal });
+      const schema = squadResponseSchema.refine(
+        (response) => response.id === teamId,
+        { path: ['id'], message: 'Unexpected team' },
+      );
       const result = schema.safeParse(data);
       if (!result.success) {
         throw new FootballDataValidationError(resource, result.error);

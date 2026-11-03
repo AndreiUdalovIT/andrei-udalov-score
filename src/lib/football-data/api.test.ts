@@ -6,6 +6,7 @@ import { createFootballDataApi, FootballDataValidationError } from './api';
 import { FootballDataHttpError } from './client';
 import fixture from './fixtures/competition-teams.json';
 import matchFixture from './fixtures/matches.json';
+import standingsFixture from './fixtures/standings.json';
 
 vi.mock('server-only', () => ({}));
 
@@ -356,6 +357,161 @@ describe('getCompetitionMatches', () => {
     const api = createFootballDataApi({ token: TOKEN });
 
     await expect(api.getCompetitionMatches('PL')).rejects.toBeInstanceOf(
+      FootballDataHttpError,
+    );
+  });
+});
+
+describe('getCompetitionStandings', () => {
+  it.each(Object.entries(standingsFixture))(
+    'loads and validates the %s standings',
+    async (_name, data) => {
+      fetchMock.mockResolvedValue(Response.json(data));
+      const api = createFootballDataApi({ token: TOKEN });
+
+      const result = await api.getCompetitionStandings(data.competition.code);
+
+      expect(result.competition.code).toBe(data.competition.code);
+      expect(result.standings[0]?.table.map((row) => row.position)).toEqual(
+        data.standings[0]?.table.map((row) => row.position),
+      );
+      expect(result.standings[0]?.table[1]?.team.name).toBe(
+        data.standings[0]?.table[1]?.team.name,
+      );
+      expect(fetchMock).toHaveBeenCalledWith(
+        new URL(
+          `https://api.football-data.org/v4/competitions/${data.competition.code}/standings`,
+        ),
+        expect.any(Object),
+      );
+    },
+  );
+
+  it('normalizes the competition code and sends the season filter', async () => {
+    fetchMock.mockResolvedValue(Response.json(standingsFixture.league));
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await api.getCompetitionStandings(' pl ', { season: 2026 });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL(
+        'https://api.football-data.org/v4/competitions/PL/standings?season=2026',
+      ),
+      expect.any(Object),
+    );
+  });
+
+  it('returns every provided table type for the mapper to select', async () => {
+    fetchMock.mockResolvedValue(
+      Response.json({
+        ...standingsFixture.league,
+        standings: standingsFixture.league.standings.flatMap((standing) => [
+          standing,
+          { ...standing, type: 'HOME' },
+          { ...standing, type: 'AWAY' },
+        ]),
+      }),
+    );
+    const api = createFootballDataApi({ token: TOKEN });
+
+    const result = await api.getCompetitionStandings('PL');
+
+    expect(result.standings.map((standing) => standing.type)).toEqual([
+      'TOTAL',
+      'HOME',
+      'AWAY',
+    ]);
+  });
+
+  it('accepts an empty standings list', async () => {
+    fetchMock.mockResolvedValue(
+      Response.json({ ...standingsFixture.league, standings: [] }),
+    );
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getCompetitionStandings('PL')).resolves.toMatchObject({
+      standings: [],
+    });
+  });
+
+  it('rejects another competition even when the list is empty', async () => {
+    fetchMock.mockResolvedValue(
+      Response.json({ ...standingsFixture.championsLeague, standings: [] }),
+    );
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getCompetitionStandings('PL')).rejects.toMatchObject({
+      name: 'FootballDataValidationError',
+      issues: [{ code: 'custom', path: ['competition', 'code'] }],
+    });
+  });
+
+  it('rejects a response belonging to another season', async () => {
+    fetchMock.mockResolvedValue(Response.json(standingsFixture.league));
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(
+      api.getCompetitionStandings('PL', { season: 2025 }),
+    ).rejects.toMatchObject({
+      name: 'FootballDataValidationError',
+      issues: [{ code: 'custom', path: ['season', 'startDate'] }],
+    });
+  });
+
+  it('reports invalid points at the exact table row', async () => {
+    fetchMock.mockResolvedValue(
+      Response.json({
+        ...standingsFixture.league,
+        standings: standingsFixture.league.standings.map((standing) => ({
+          ...standing,
+          table: [{ ...standing.table[0], points: null }],
+        })),
+      }),
+    );
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getCompetitionStandings('PL')).rejects.toMatchObject({
+      name: 'FootballDataValidationError',
+      issues: [
+        { code: 'invalid_type', path: ['standings', 0, 'table', 0, 'points'] },
+      ],
+    });
+  });
+
+  it('rejects an invalid competition code before making a request', async () => {
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getCompetitionStandings('../standings')).rejects.toThrow(
+      RangeError,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid season before making a request', async () => {
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getCompetitionStandings('PL', { season: NaN })).rejects.toThrow(
+      RangeError,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('forwards cancellation to the HTTP client', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(
+      api.getCompetitionStandings('PL', { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves HTTP errors', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 403 }));
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getCompetitionStandings('PL')).rejects.toBeInstanceOf(
       FootballDataHttpError,
     );
   });

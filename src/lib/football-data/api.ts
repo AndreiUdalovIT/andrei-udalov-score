@@ -11,6 +11,10 @@ import {
   type ApiMatchesResponse,
 } from './schemas/matches';
 import { competitionSchema } from './schemas/shared';
+import {
+  standingsResponseSchema,
+  type ApiStandingsResponse,
+} from './schemas/standings';
 import { teamsResponseSchema, type ApiTeamsResponse } from './schemas/teams';
 
 const dateSchema = z.iso.date();
@@ -166,6 +170,36 @@ export function createFootballDataApi(options: ClientOptions = {}) {
         throw new FootballDataValidationError(resource, result.error);
       }
       return { matches: result.data.matches };
+    },
+
+    async getCompetitionStandings(
+      competitionCode: string,
+      { season, signal }: CompetitionOptions = {},
+    ): Promise<ApiStandingsResponse> {
+      const code = normalizeCompetitionCode(competitionCode);
+      validateSeason(season);
+
+      const resource = `competitions/${code}/standings`;
+      const data = await client.get(resource, {
+        params: season === undefined ? undefined : { season },
+        signal,
+      });
+      const schema = standingsResponseSchema
+        .refine((response) => response.competition.code === code, {
+          path: ['competition', 'code'],
+          message: 'Unexpected competition',
+        })
+        .refine(
+          (response) =>
+            season === undefined ||
+            Number(response.season.startDate.slice(0, 4)) === season,
+          { path: ['season', 'startDate'], message: 'Unexpected season' },
+        );
+      const result = schema.safeParse(data);
+      if (!result.success) {
+        throw new FootballDataValidationError(resource, result.error);
+      }
+      return result.data;
     },
   };
 }

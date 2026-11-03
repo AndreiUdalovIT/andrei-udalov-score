@@ -2,7 +2,7 @@ import 'server-only';
 
 const API_URL = new URL('https://api.football-data.org/v4/');
 
-type ClientOptions = {
+export type ClientOptions = {
   token?: string;
   timeoutMs?: number;
 };

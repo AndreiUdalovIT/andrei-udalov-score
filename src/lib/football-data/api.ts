@@ -10,6 +10,7 @@ import {
   matchesResponseSchema,
   type ApiMatchesResponse,
 } from './schemas/matches';
+import { scorersResponseSchema, type ApiScorersResponse } from './schemas/scorers';
 import { competitionSchema } from './schemas/shared';
 import {
   standingsResponseSchema,
@@ -28,6 +29,10 @@ type CompetitionMatchesOptions = CompetitionOptions & {
   status?: MatchStatus;
   dateFrom?: string;
   dateTo?: string;
+};
+
+type CompetitionScorersOptions = CompetitionOptions & {
+  limit?: number;
 };
 
 function normalizeCompetitionCode(competitionCode: string) {
@@ -185,6 +190,40 @@ export function createFootballDataApi(options: ClientOptions = {}) {
         signal,
       });
       const schema = standingsResponseSchema
+        .refine((response) => response.competition.code === code, {
+          path: ['competition', 'code'],
+          message: 'Unexpected competition',
+        })
+        .refine(
+          (response) =>
+            season === undefined ||
+            Number(response.season.startDate.slice(0, 4)) === season,
+          { path: ['season', 'startDate'], message: 'Unexpected season' },
+        );
+      const result = schema.safeParse(data);
+      if (!result.success) {
+        throw new FootballDataValidationError(resource, result.error);
+      }
+      return result.data;
+    },
+
+    async getCompetitionScorers(
+      competitionCode: string,
+      { season, limit, signal }: CompetitionScorersOptions = {},
+    ): Promise<ApiScorersResponse> {
+      const code = normalizeCompetitionCode(competitionCode);
+      validateSeason(season);
+      if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1)) {
+        throw new RangeError('limit must be a positive safe integer');
+      }
+
+      const params: Record<string, string | number> = {};
+      if (season !== undefined) params.season = season;
+      if (limit !== undefined) params.limit = limit;
+
+      const resource = `competitions/${code}/scorers`;
+      const data = await client.get(resource, { params, signal });
+      const schema = scorersResponseSchema
         .refine((response) => response.competition.code === code, {
           path: ['competition', 'code'],
           message: 'Unexpected competition',

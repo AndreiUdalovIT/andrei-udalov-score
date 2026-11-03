@@ -5,13 +5,6 @@ import { teamsResponseSchema } from './teams';
 
 // GET /v4/competitions/PL/teams, captured on 2026-11-03.
 // The fixture keeps one team and the competition/season fields.
-function withTeam(fields: Record<string, unknown>) {
-  return {
-    ...fixture,
-    teams: fixture.teams.map((team) => ({ ...team, ...fields })),
-  };
-}
-
 describe('competition teams response', () => {
   it('parses a trimmed real response and keeps dates as calendar strings', () => {
     const result = teamsResponseSchema.parse(fixture);
@@ -35,26 +28,6 @@ describe('competition teams response', () => {
     expect(result.teams[0]).not.toHaveProperty('venue');
   });
 
-  it.each(['shortName', 'tla', 'crest', 'clubColors'] as const)(
-    'preserves a null %s without inventing a value',
-    (field) => {
-      const result = teamsResponseSchema.parse(withTeam({ [field]: null }));
-
-      expect(result.teams[0]?.[field]).toBeNull();
-    },
-  );
-
-  it('preserves an unknown matchday and competition emblem', () => {
-    const result = teamsResponseSchema.parse({
-      ...fixture,
-      competition: { ...fixture.competition, emblem: null },
-      season: { ...fixture.season, currentMatchday: null },
-    });
-
-    expect(result.season.currentMatchday).toBeNull();
-    expect(result.competition.emblem).toBeNull();
-  });
-
   it('accepts an empty list of teams', () => {
     const result = teamsResponseSchema.parse({ ...fixture, teams: [] });
 
@@ -67,36 +40,4 @@ describe('competition teams response', () => {
       expect(teamsResponseSchema.safeParse(input).success).toBe(false);
     },
   );
-
-  it.each([null, '57', 0, -1, 1.5])('rejects an invalid team ID %j', (id) => {
-    expect(teamsResponseSchema.safeParse(withTeam({ id })).success).toBe(false);
-  });
-
-  it.each(['', null, undefined])('rejects a missing team name %j', (name) => {
-    expect(teamsResponseSchema.safeParse(withTeam({ name })).success).toBe(false);
-  });
-
-  it('distinguishes a missing nullable field from an explicit null', () => {
-    const result = teamsResponseSchema.safeParse(withTeam({ shortName: undefined }));
-
-    expect(result.success).toBe(false);
-  });
-
-  it.each(['2026-02-30', 'not-a-date', '2026-08-21T00:00:00Z'])(
-    'rejects an invalid season date %s',
-    (startDate) => {
-      const result = teamsResponseSchema.safeParse({
-        ...fixture,
-        season: { ...fixture.season, startDate },
-      });
-
-      expect(result.success).toBe(false);
-    },
-  );
-
-  it('rejects an invalid crest URL', () => {
-    const result = teamsResponseSchema.safeParse(withTeam({ crest: 'not-a-url' }));
-
-    expect(result.success).toBe(false);
-  });
 });

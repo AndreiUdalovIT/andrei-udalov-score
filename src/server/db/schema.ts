@@ -88,8 +88,9 @@ export const matches = pgTable(
 );
 
 /**
- * The overall table only: the API sends no home and away tables, so those
- * are computed from matches. The key also serves «the table of a competition».
+ * The overall table only. Home and away stats are computed from matches,
+ * so the app does not depend on separate HOME/AWAY tables from the API.
+ * The key also serves «the table of a competition».
  */
 export const standings = pgTable(
   'standings',

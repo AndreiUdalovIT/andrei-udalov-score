@@ -4,6 +4,12 @@ import { createFootballDataClient } from './client';
 
 vi.mock('server-only', () => ({}));
 
+vi.mock('./rate-limiter', () => ({
+  createRateLimiter: () => ({
+    run: <T>(task: () => Promise<T>) => task(),
+  }),
+}));
+
 const TOKEN = 'test-token';
 const fetchMock = vi.fn<typeof fetch>();
 

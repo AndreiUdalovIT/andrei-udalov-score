@@ -1,6 +1,10 @@
 import 'server-only';
 
+import { createRateLimiter } from './rate-limiter';
+
 const API_URL = new URL('https://api.football-data.org/v4/');
+// Clients using the same token share a request queue within this module.
+const rateLimiters = new Map<string, ReturnType<typeof createRateLimiter>>();
 
 export type ClientOptions = {
   token?: string;
@@ -32,6 +36,9 @@ export function createFootballDataClient({
     throw new RangeError('timeoutMs must be an integer between 1 and 2147483647');
   }
 
+  const rateLimiter = rateLimiters.get(authToken) ?? createRateLimiter();
+  rateLimiters.set(authToken, rateLimiter);
+
   return {
     async get(path: string, { params, signal }: GetOptions = {}): Promise<unknown> {
       const url = new URL(path, API_URL);
@@ -48,50 +55,55 @@ export function createFootballDataClient({
         url.searchParams.set(key, String(value));
       }
 
-      const timeoutController = new AbortController();
-      const requestSignal = signal
-        ? AbortSignal.any([signal, timeoutController.signal])
-        : timeoutController.signal;
-      // Keep the timeout active until the response body has also been read.
-      const timer = setTimeout(() => timeoutController.abort(), timeoutMs);
+      return rateLimiter.run(async () => {
+        const timeoutController = new AbortController();
+        const requestSignal = signal
+          ? AbortSignal.any([signal, timeoutController.signal])
+          : timeoutController.signal;
+        // Keep the timeout active until the response body has also been read.
+        const timer = setTimeout(() => timeoutController.abort(), timeoutMs);
 
-      try {
-        requestSignal.throwIfAborted();
-        const response = await fetch(url, {
-          method: 'GET',
-          headers: { 'X-Auth-Token': authToken, Accept: 'application/json' },
-          cache: 'no-store',
-          // Never forward the token to a redirect target.
-          redirect: 'error',
-          signal: requestSignal,
-        });
-        if (!response.ok) {
-          await response.body?.cancel().catch(() => undefined);
-          throw new FootballDataHttpError(
-            response.status,
-            response.headers.get('Retry-After'),
-          );
-        }
+        try {
+          requestSignal.throwIfAborted();
+          const response = await fetch(url, {
+            method: 'GET',
+            headers: { 'X-Auth-Token': authToken, Accept: 'application/json' },
+            cache: 'no-store',
+            // Never forward the token to a redirect target.
+            redirect: 'error',
+            signal: requestSignal,
+          });
+          if (!response.ok) {
+            await response.body?.cancel().catch(() => undefined);
+            throw new FootballDataHttpError(
+              response.status,
+              response.headers.get('Retry-After'),
+            );
+          }
 
-        const data: unknown = await response.json();
-        requestSignal.throwIfAborted();
-        return data;
-      } catch (error) {
-        if (signal?.aborted) {
-          throw new DOMException('football-data request aborted', 'AbortError');
+          const data: unknown = await response.json();
+          requestSignal.throwIfAborted();
+          return data;
+        } catch (error) {
+          if (signal?.aborted) {
+            throw new DOMException('football-data request aborted', 'AbortError');
+          }
+          if (timeoutController.signal.aborted) {
+            throw new DOMException(
+              'football-data request timed out',
+              'TimeoutError',
+            );
+          }
+          if (error instanceof FootballDataHttpError) throw error;
+          if (error instanceof SyntaxError) {
+            throw new Error('football-data returned invalid JSON');
+          }
+          // Upstream errors can contain credentials; expose only a fixed message.
+          throw new Error('football-data request failed');
+        } finally {
+          clearTimeout(timer);
         }
-        if (timeoutController.signal.aborted) {
-          throw new DOMException('football-data request timed out', 'TimeoutError');
-        }
-        if (error instanceof FootballDataHttpError) throw error;
-        if (error instanceof SyntaxError) {
-          throw new Error('football-data returned invalid JSON');
-        }
-        // Upstream errors can contain credentials; expose only a fixed message.
-        throw new Error('football-data request failed');
-      } finally {
-        clearTimeout(timer);
-      }
+      }, signal);
     },
   };
 }

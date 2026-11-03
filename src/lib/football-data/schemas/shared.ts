@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const idSchema = z.int().positive();
+export const idSchema = z.int().positive();
 
 export const competitionSchema = z.object({
   id: idSchema,

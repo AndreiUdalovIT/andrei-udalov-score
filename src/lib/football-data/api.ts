@@ -1,14 +1,47 @@
 import 'server-only';
 
-import type { ZodError } from 'zod';
+import { z, type ZodError } from 'zod';
+
+import { MATCH_STATUSES, type MatchStatus } from '@/lib/types/football';
 
 import { createFootballDataClient, type ClientOptions } from './client';
+import {
+  matchSchema,
+  matchesResponseSchema,
+  type ApiMatchesResponse,
+} from './schemas/matches';
+import { competitionSchema } from './schemas/shared';
 import { teamsResponseSchema, type ApiTeamsResponse } from './schemas/teams';
 
-type CompetitionTeamsOptions = {
+const dateSchema = z.iso.date();
+
+type CompetitionOptions = {
   season?: number;
   signal?: AbortSignal;
 };
+
+type CompetitionMatchesOptions = CompetitionOptions & {
+  status?: MatchStatus;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
+function normalizeCompetitionCode(competitionCode: string) {
+  const code = competitionCode.trim().toUpperCase();
+  if (!/^[A-Z][A-Z0-9]*$/.test(code)) {
+    throw new RangeError('competitionCode must be a football-data competition code');
+  }
+  return code;
+}
+
+function validateSeason(season?: number) {
+  if (
+    season !== undefined &&
+    (!Number.isInteger(season) || season < 1000 || season > 9999)
+  ) {
+    throw new RangeError('season must be a four-digit starting year');
+  }
+}
 
 export class FootballDataValidationError extends Error {
   readonly issues;
@@ -30,20 +63,10 @@ export function createFootballDataApi(options: ClientOptions = {}) {
   return {
     async getCompetitionTeams(
       competitionCode: string,
-      { season, signal }: CompetitionTeamsOptions = {},
+      { season, signal }: CompetitionOptions = {},
     ): Promise<ApiTeamsResponse> {
-      const code = competitionCode.trim().toUpperCase();
-      if (!/^[A-Z][A-Z0-9]*$/.test(code)) {
-        throw new RangeError(
-          'competitionCode must be a football-data competition code',
-        );
-      }
-      if (
-        season !== undefined &&
-        (!Number.isInteger(season) || season < 1000 || season > 9999)
-      ) {
-        throw new RangeError('season must be a four-digit starting year');
-      }
+      const code = normalizeCompetitionCode(competitionCode);
+      validateSeason(season);
 
       const resource = `competitions/${code}/teams`;
       const data = await client.get(resource, {
@@ -66,6 +89,83 @@ export function createFootballDataApi(options: ClientOptions = {}) {
         throw new FootballDataValidationError(resource, result.error);
       }
       return result.data;
+    },
+
+    async getCompetitionMatches(
+      competitionCode: string,
+      { season, status, dateFrom, dateTo, signal }: CompetitionMatchesOptions = {},
+    ): Promise<ApiMatchesResponse> {
+      const code = normalizeCompetitionCode(competitionCode);
+      validateSeason(season);
+      if (status !== undefined && !MATCH_STATUSES.includes(status)) {
+        throw new RangeError(
+          'status must be a supported football-data match status',
+        );
+      }
+      if ((dateFrom === undefined) !== (dateTo === undefined)) {
+        throw new RangeError('dateFrom and dateTo must be provided together');
+      }
+      if (dateFrom !== undefined && dateTo !== undefined) {
+        if (
+          !dateSchema.safeParse(dateFrom).success ||
+          !dateSchema.safeParse(dateTo).success
+        ) {
+          throw new RangeError('dateFrom and dateTo must use YYYY-MM-DD');
+        }
+        if (dateFrom > dateTo) {
+          throw new RangeError('dateFrom must not be after dateTo');
+        }
+      }
+
+      const params: Record<string, string | number> = {};
+      if (season !== undefined) params.season = season;
+      if (status !== undefined) params.status = status;
+      if (dateFrom !== undefined && dateTo !== undefined) {
+        params.dateFrom = dateFrom;
+        params.dateTo = dateTo;
+      }
+
+      const resource = `competitions/${code}/matches`;
+      const data = await client.get(resource, { params, signal });
+      const schema = matchesResponseSchema.extend({
+        competition: competitionSchema.refine(
+          (competition) => competition.code === code,
+          { path: ['code'], message: 'Unexpected competition' },
+        ),
+        matches: z.array(
+          matchSchema
+            .refine((match) => match.competition.code === code, {
+              path: ['competition', 'code'],
+              message: 'Unexpected competition',
+            })
+            .refine(
+              (match) =>
+                season === undefined ||
+                Number(match.season.startDate.slice(0, 4)) === season,
+              { path: ['season', 'startDate'], message: 'Unexpected season' },
+            )
+            .refine((match) => status === undefined || match.status === status, {
+              path: ['status'],
+              message: 'Unexpected status',
+            })
+            .refine(
+              (match) => {
+                if (dateFrom === undefined || dateTo === undefined) return true;
+                const date = match.utcDate.slice(0, 10);
+                return date >= dateFrom && date <= dateTo;
+              },
+              {
+                path: ['utcDate'],
+                message: 'Match outside the requested date range',
+              },
+            ),
+        ),
+      });
+      const result = schema.safeParse(data);
+      if (!result.success) {
+        throw new FootballDataValidationError(resource, result.error);
+      }
+      return { matches: result.data.matches };
     },
   };
 }

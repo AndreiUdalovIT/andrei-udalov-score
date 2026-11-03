@@ -5,6 +5,7 @@ import type { MatchStatus } from '@/lib/types/football';
 import { createFootballDataApi, FootballDataValidationError } from './api';
 import { FootballDataHttpError } from './client';
 import fixture from './fixtures/competition-teams.json';
+import head2headFixture from './fixtures/head2head.json';
 import matchFixture from './fixtures/matches.json';
 import scorersFixture from './fixtures/scorers.json';
 import squadFixture from './fixtures/squad.json';
@@ -769,5 +770,93 @@ describe('getTeamSquad', () => {
     const api = createFootballDataApi({ token: TOKEN });
 
     await expect(api.getTeamSquad(57)).rejects.toBeInstanceOf(FootballDataHttpError);
+  });
+});
+
+describe('getMatchHead2Head', () => {
+  it('returns validated matches without the unreliable upstream aggregates', async () => {
+    fetchMock.mockResolvedValue(Response.json(head2headFixture.withMatches));
+    const api = createFootballDataApi({ token: TOKEN });
+
+    const result = await api.getMatchHead2Head(552096);
+
+    expect(result).toEqual({ matches: head2headFixture.withMatches.matches });
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL('https://api.football-data.org/v4/matches/552096/head2head'),
+      expect.any(Object),
+    );
+  });
+
+  it('sends the requested match limit', async () => {
+    fetchMock.mockResolvedValue(Response.json(head2headFixture.withMatches));
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await api.getMatchHead2Head(552096, { limit: 2 });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL('https://api.football-data.org/v4/matches/552096/head2head?limit=2'),
+      expect.any(Object),
+    );
+  });
+
+  it('preserves an empty list even when the aggregates report matches', async () => {
+    fetchMock.mockResolvedValue(Response.json(head2headFixture.withoutMatches));
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getMatchHead2Head(560634)).resolves.toEqual({ matches: [] });
+  });
+
+  it('reports an unknown match status through the shared validation error', async () => {
+    fetchMock.mockResolvedValue(
+      Response.json({
+        ...head2headFixture.withMatches,
+        matches: [
+          { ...head2headFixture.withMatches.matches[0], status: 'FUTURE_STATUS' },
+        ],
+      }),
+    );
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getMatchHead2Head(552096)).rejects.toMatchObject({
+      name: 'FootballDataValidationError',
+      resource: 'matches/552096/head2head',
+      issues: [{ code: 'invalid_value', path: ['matches', 0, 'status'] }],
+    });
+  });
+
+  it('rejects an invalid match ID before making a request', async () => {
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getMatchHead2Head(0)).rejects.toThrow(RangeError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid limit before making a request', async () => {
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getMatchHead2Head(552096, { limit: 0 })).rejects.toThrow(
+      RangeError,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('forwards cancellation to the HTTP client', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(
+      api.getMatchHead2Head(552096, { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves HTTP errors', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 403 }));
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getMatchHead2Head(552096)).rejects.toBeInstanceOf(
+      FootballDataHttpError,
+    );
   });
 });

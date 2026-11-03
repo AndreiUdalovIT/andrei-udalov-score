@@ -40,6 +40,11 @@ type TeamSquadOptions = {
   signal?: AbortSignal;
 };
 
+type MatchHead2HeadOptions = {
+  limit?: number;
+  signal?: AbortSignal;
+};
+
 function normalizeCompetitionCode(competitionCode: string) {
   const code = competitionCode.trim().toUpperCase();
   if (!/^[A-Z][A-Z0-9]*$/.test(code)) {
@@ -261,6 +266,30 @@ export function createFootballDataApi(options: ClientOptions = {}) {
         { path: ['id'], message: 'Unexpected team' },
       );
       const result = schema.safeParse(data);
+      if (!result.success) {
+        throw new FootballDataValidationError(resource, result.error);
+      }
+      return result.data;
+    },
+
+    async getMatchHead2Head(
+      matchId: number,
+      { limit, signal }: MatchHead2HeadOptions = {},
+    ): Promise<ApiMatchesResponse> {
+      if (!Number.isSafeInteger(matchId) || matchId < 1) {
+        throw new RangeError('matchId must be a positive safe integer');
+      }
+      if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1)) {
+        throw new RangeError('limit must be a positive safe integer');
+      }
+
+      const resource = `matches/${matchId}/head2head`;
+      const data = await client.get(resource, {
+        params: limit === undefined ? undefined : { limit },
+        signal,
+      });
+      // Upstream aggregates can disagree with the returned matches.
+      const result = matchesResponseSchema.safeParse(data);
       if (!result.success) {
         throw new FootballDataValidationError(resource, result.error);
       }

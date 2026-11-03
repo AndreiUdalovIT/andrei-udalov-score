@@ -185,6 +185,80 @@ describe('football-data rate limiter', () => {
     await expect(result).resolves.toBe('next');
   });
 
+  it('postpones an armed timer and preserves the queue order and interval', async () => {
+    const limiter = createRateLimiter();
+    await limiter.run(async () => undefined);
+    const starts: number[] = [];
+    const task = (id: number) => async () => {
+      starts.push(id);
+      return id;
+    };
+    const results = Promise.all([limiter.run(task(1)), limiter.run(task(2))]);
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    limiter.pause(12_000);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(11_999);
+    expect(starts).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(starts).toEqual([1]);
+    await vi.advanceTimersByTimeAsync(5_999);
+    expect(starts).toEqual([1]);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(results).resolves.toEqual([1, 2]);
+    expect(starts).toEqual([1, 2]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('remembers a pause in an empty queue and only extends its deadline', async () => {
+    const limiter = createRateLimiter();
+    limiter.pause(12_000);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(2_000);
+    limiter.pause(20_000);
+    await vi.advanceTimersByTimeAsync(2_000);
+    limiter.pause(1_000);
+    limiter.pause(0);
+    const task = vi.fn(async () => 'next');
+
+    const result = limiter.run(task);
+    await vi.advanceTimersByTimeAsync(17_999);
+    expect(task).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(result).resolves.toBe('next');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('keeps the pause after canceling the last queued task', async () => {
+    const limiter = createRateLimiter();
+    limiter.pause(12_000);
+    const controller = new AbortController();
+    const canceled = limiter.run(async () => undefined, controller.signal);
+    const rejection = expect(canceled).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    controller.abort();
+    await rejection;
+    expect(vi.getTimerCount()).toBe(0);
+
+    const task = vi.fn(async () => 'next');
+    const result = limiter.run(task);
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(task).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(result).resolves.toBe('next');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([-1, 2_147_483_648])('rejects an unsupported pause %s', (delayMs) => {
+    expect(() => createRateLimiter().pause(delayMs)).toThrow(RangeError);
+  });
+
   it.each([0, 2_147_483_648])('rejects an unsupported interval %s', (intervalMs) => {
     expect(() => createRateLimiter(intervalMs)).toThrow(RangeError);
   });

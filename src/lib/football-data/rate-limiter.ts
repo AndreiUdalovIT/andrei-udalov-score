@@ -48,6 +48,26 @@ export function createRateLimiter(intervalMs = 6_000) {
   }
 
   return {
+    pause(delayMs: number): void {
+      if (
+        !Number.isInteger(delayMs) ||
+        delayMs < 0 ||
+        delayMs > MAX_TIMER_DELAY_MS
+      ) {
+        throw new RangeError('delayMs must be an integer between 0 and 2147483647');
+      }
+
+      const deadline = performance.now() + delayMs;
+      if (deadline <= nextStartAt) return;
+
+      nextStartAt = deadline;
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      pump();
+    },
+
     run<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
       if (signal?.aborted) return Promise.reject(createAbortError());
 

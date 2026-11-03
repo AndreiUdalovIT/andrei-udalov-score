@@ -127,11 +127,11 @@ export const scorers = pgTable(
     teamId: integer()
       .notNull()
       .references(() => teams.id),
-    // The API sends null for zero assists or penalties.
     playedMatches: integer().notNull().default(0),
     goals: integer().notNull().default(0),
-    assists: integer().notNull().default(0),
-    penalties: integer().notNull().default(0),
+    // Preserve unknown API statistics; a confirmed zero is stored as 0.
+    assists: integer(),
+    penalties: integer(),
   },
   (t) => [primaryKey({ columns: [t.competitionId, t.season, t.playerId] })],
 );

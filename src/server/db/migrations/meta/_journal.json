@@ -8,6 +8,13 @@
       "when": 1793190682178,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793713824000,
+      "tag": "0001_nullable_scorer_stats",
+      "breakpoints": true
     }
   ]
 }

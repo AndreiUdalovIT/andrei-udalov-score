@@ -1,0 +1,50 @@
+{
+  "arsenal": {
+    "id": 57,
+    "name": "Arsenal FC",
+    "shortName": "Arsenal",
+    "tla": "ARS",
+    "crest": "https://crests.football-data.org/57.png",
+    "clubColors": "Red / White",
+    "squad": [
+      {
+        "id": 3189,
+        "name": "Kepa Arrizabalaga",
+        "position": "Goalkeeper",
+        "dateOfBirth": "1994-10-03",
+        "nationality": "Spain"
+      },
+      {
+        "id": 302255,
+        "name": "Maalik Hashi",
+        "position": null,
+        "dateOfBirth": "2008-09-03",
+        "nationality": "England"
+      }
+    ]
+  },
+  "clubBrugge": {
+    "id": 851,
+    "name": "Club Brugge KV",
+    "shortName": "Club Brugge",
+    "tla": "BRU",
+    "crest": "https://crests.football-data.org/851.png",
+    "clubColors": "Blue / Black",
+    "squad": [
+      {
+        "id": 3470,
+        "name": "Yann Sommer",
+        "position": "Goalkeeper",
+        "dateOfBirth": "1988-12-17",
+        "nationality": "Switzerland"
+      },
+      {
+        "id": 272459,
+        "name": "Andrej Vasovic",
+        "position": "Offence",
+        "dateOfBirth": null,
+        "nationality": "Switzerland"
+      }
+    ]
+  }
+}

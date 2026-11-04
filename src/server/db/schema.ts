@@ -88,8 +88,9 @@ export const matches = pgTable(
 );
 
 /**
- * The overall table only: the API sends no home and away tables, so those
- * are computed from matches. The key also serves «the table of a competition».
+ * The overall table only. Home and away stats are computed from matches,
+ * so the app does not depend on separate HOME/AWAY tables from the API.
+ * The key also serves «the table of a competition».
  */
 export const standings = pgTable(
   'standings',
@@ -126,11 +127,11 @@ export const scorers = pgTable(
     teamId: integer()
       .notNull()
       .references(() => teams.id),
-    // The API sends null for zero assists or penalties.
     playedMatches: integer().notNull().default(0),
     goals: integer().notNull().default(0),
-    assists: integer().notNull().default(0),
-    penalties: integer().notNull().default(0),
+    // Preserve unknown API statistics; a confirmed zero is stored as 0.
+    assists: integer(),
+    penalties: integer(),
   },
   (t) => [primaryKey({ columns: [t.competitionId, t.season, t.playerId] })],
 );

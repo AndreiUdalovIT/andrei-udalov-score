@@ -1,0 +1,104 @@
+{
+  "league": {
+    "competition": {
+      "id": 2021,
+      "name": "Premier League",
+      "code": "PL",
+      "type": "LEAGUE",
+      "emblem": "https://crests.football-data.org/PL.png"
+    },
+    "season": {
+      "id": 2502,
+      "startDate": "2026-08-21",
+      "endDate": "2027-05-30",
+      "currentMatchday": 9
+    },
+    "scorers": [
+      {
+        "player": {
+          "id": 38101,
+          "name": "Erling Haaland"
+        },
+        "team": {
+          "id": 65,
+          "name": "Manchester City FC",
+          "shortName": "Man City",
+          "tla": "MCI",
+          "crest": "https://crests.football-data.org/65.png"
+        },
+        "playedMatches": 9,
+        "goals": 9,
+        "assists": null,
+        "penalties": null
+      },
+      {
+        "player": {
+          "id": 6486,
+          "name": "Alexander Isak"
+        },
+        "team": {
+          "id": 64,
+          "name": "Liverpool FC",
+          "shortName": "Liverpool",
+          "tla": "LIV",
+          "crest": "https://crests.football-data.org/64.png"
+        },
+        "playedMatches": 8,
+        "goals": 6,
+        "assists": null,
+        "penalties": null
+      }
+    ]
+  },
+  "championsLeague": {
+    "competition": {
+      "id": 2001,
+      "name": "UEFA Champions League",
+      "code": "CL",
+      "type": "CUP",
+      "emblem": "https://crests.football-data.org/CL.png"
+    },
+    "season": {
+      "id": 2557,
+      "startDate": "2026-09-08",
+      "endDate": "2027-01-27",
+      "currentMatchday": 4
+    },
+    "scorers": [
+      {
+        "player": {
+          "id": 177321,
+          "name": "Nicolo Tresoldi"
+        },
+        "team": {
+          "id": 851,
+          "name": "Club Brugge KV",
+          "shortName": "Club Brugge",
+          "tla": "BRU",
+          "crest": "https://crests.football-data.org/851.png"
+        },
+        "playedMatches": 3,
+        "goals": 4,
+        "assists": null,
+        "penalties": 2
+      },
+      {
+        "player": {
+          "id": 38101,
+          "name": "Erling Haaland"
+        },
+        "team": {
+          "id": 65,
+          "name": "Manchester City FC",
+          "shortName": "Man City",
+          "tla": "MCI",
+          "crest": "https://crests.football-data.org/65.png"
+        },
+        "playedMatches": 3,
+        "goals": 4,
+        "assists": null,
+        "penalties": null
+      }
+    ]
+  }
+}

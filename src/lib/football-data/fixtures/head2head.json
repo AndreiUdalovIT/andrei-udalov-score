@@ -1,0 +1,149 @@
+{
+  "withMatches": {
+    "aggregates": {
+      "numberOfMatches": 2,
+      "totalGoals": 12,
+      "homeTeam": {
+        "id": 524,
+        "name": "Paris Saint-Germain FC",
+        "wins": 0,
+        "draws": 0,
+        "losses": 0
+      },
+      "awayTeam": {
+        "id": 57,
+        "name": "Arsenal FC",
+        "wins": 0,
+        "draws": 0,
+        "losses": 0
+      }
+    },
+    "matches": [
+      {
+        "id": 552096,
+        "competition": {
+          "id": 2001,
+          "name": "UEFA Champions League",
+          "code": "CL",
+          "emblem": "https://crests.football-data.org/CL.png"
+        },
+        "season": {
+          "id": 2454,
+          "startDate": "2025-09-16",
+          "endDate": "2026-05-30",
+          "currentMatchday": 8
+        },
+        "utcDate": "2026-05-30T16:00:00Z",
+        "status": "FINISHED",
+        "matchday": null,
+        "stage": "FINAL",
+        "homeTeam": {
+          "id": 524,
+          "name": "Paris Saint-Germain FC",
+          "shortName": "PSG",
+          "tla": "PSG",
+          "crest": "https://crests.football-data.org/524.png"
+        },
+        "awayTeam": {
+          "id": 57,
+          "name": "Arsenal FC",
+          "shortName": "Arsenal",
+          "tla": "ARS",
+          "crest": "https://crests.football-data.org/57.png"
+        },
+        "score": {
+          "winner": "HOME_TEAM",
+          "duration": "PENALTY_SHOOTOUT",
+          "fullTime": {
+            "home": 5,
+            "away": 4
+          },
+          "halfTime": {
+            "home": 0,
+            "away": 1
+          },
+          "regularTime": {
+            "home": 1,
+            "away": 1
+          },
+          "extraTime": {
+            "home": 0,
+            "away": 0
+          },
+          "penalties": {
+            "home": 4,
+            "away": 3
+          }
+        },
+        "lastUpdated": "2026-06-13T20:20:17Z"
+      },
+      {
+        "id": 524118,
+        "competition": {
+          "id": 2001,
+          "name": "UEFA Champions League",
+          "code": "CL",
+          "emblem": "https://crests.football-data.org/CL.png"
+        },
+        "season": {
+          "id": 2350,
+          "startDate": "2024-09-17",
+          "endDate": "2025-05-31",
+          "currentMatchday": 8
+        },
+        "utcDate": "2025-05-07T19:00:00Z",
+        "status": "FINISHED",
+        "matchday": 2,
+        "stage": "SEMI_FINALS",
+        "homeTeam": {
+          "id": 524,
+          "name": "Paris Saint-Germain FC",
+          "shortName": "PSG",
+          "tla": "PSG",
+          "crest": "https://crests.football-data.org/524.png"
+        },
+        "awayTeam": {
+          "id": 57,
+          "name": "Arsenal FC",
+          "shortName": "Arsenal",
+          "tla": "ARS",
+          "crest": "https://crests.football-data.org/57.png"
+        },
+        "score": {
+          "winner": "HOME_TEAM",
+          "duration": "REGULAR",
+          "fullTime": {
+            "home": 2,
+            "away": 1
+          },
+          "halfTime": {
+            "home": 1,
+            "away": 0
+          }
+        },
+        "lastUpdated": "2025-06-14T20:20:19Z"
+      }
+    ]
+  },
+  "withoutMatches": {
+    "aggregates": {
+      "numberOfMatches": 2,
+      "totalGoals": 7,
+      "homeTeam": {
+        "id": 62,
+        "name": "Everton FC",
+        "wins": 0,
+        "draws": 0,
+        "losses": 0
+      },
+      "awayTeam": {
+        "id": 1076,
+        "name": "Coventry City FC",
+        "wins": 0,
+        "draws": 0,
+        "losses": 0
+      }
+    },
+    "matches": []
+  }
+}

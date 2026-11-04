@@ -1,0 +1,126 @@
+{
+  "league": {
+    "competition": {
+      "id": 2021,
+      "name": "Premier League",
+      "code": "PL",
+      "type": "LEAGUE",
+      "emblem": "https://crests.football-data.org/PL.png"
+    },
+    "season": {
+      "id": 2502,
+      "startDate": "2026-08-21",
+      "endDate": "2027-05-30",
+      "currentMatchday": 9
+    },
+    "standings": [
+      {
+        "stage": "REGULAR_SEASON",
+        "type": "TOTAL",
+        "group": "Matchday",
+        "table": [
+          {
+            "position": 1,
+            "team": {
+              "id": 57,
+              "name": "Arsenal FC",
+              "shortName": "Arsenal",
+              "tla": "ARS",
+              "crest": "https://crests.football-data.org/57.png"
+            },
+            "playedGames": 9,
+            "form": null,
+            "won": 8,
+            "draw": 0,
+            "lost": 1,
+            "points": 24,
+            "goalsFor": 14,
+            "goalsAgainst": 5,
+            "goalDifference": 9
+          },
+          {
+            "position": 20,
+            "team": {
+              "id": 71,
+              "name": "Sunderland AFC",
+              "shortName": "Sunderland",
+              "tla": "SUN",
+              "crest": "https://crests.football-data.org/71.png"
+            },
+            "playedGames": 9,
+            "form": null,
+            "won": 1,
+            "draw": 2,
+            "lost": 6,
+            "points": 5,
+            "goalsFor": 7,
+            "goalsAgainst": 17,
+            "goalDifference": -10
+          }
+        ]
+      }
+    ]
+  },
+  "championsLeague": {
+    "competition": {
+      "id": 2001,
+      "name": "UEFA Champions League",
+      "code": "CL",
+      "type": "CUP",
+      "emblem": "https://crests.football-data.org/CL.png"
+    },
+    "season": {
+      "id": 2557,
+      "startDate": "2026-09-08",
+      "endDate": "2027-01-27",
+      "currentMatchday": 4
+    },
+    "standings": [
+      {
+        "stage": "LEAGUE_STAGE",
+        "type": "TOTAL",
+        "group": "League phase",
+        "table": [
+          {
+            "position": 1,
+            "team": {
+              "id": 524,
+              "name": "Paris Saint-Germain FC",
+              "shortName": "PSG",
+              "tla": "PSG",
+              "crest": "https://crests.football-data.org/524.png"
+            },
+            "playedGames": 3,
+            "form": null,
+            "won": 3,
+            "draw": 0,
+            "lost": 0,
+            "points": 9,
+            "goalsFor": 14,
+            "goalsAgainst": 5,
+            "goalDifference": 9
+          },
+          {
+            "position": 36,
+            "team": {
+              "id": 7509,
+              "name": "ŠK Slovan Bratislava",
+              "shortName": "Sl. Bratislava",
+              "tla": "SBA",
+              "crest": "https://crests.football-data.org/7509.png"
+            },
+            "playedGames": 3,
+            "form": null,
+            "won": 0,
+            "draw": 0,
+            "lost": 3,
+            "points": 0,
+            "goalsFor": 1,
+            "goalsAgainst": 13,
+            "goalDifference": -12
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,163 @@
+{
+  "upcoming": {
+    "id": 560634,
+    "utcDate": "2026-11-06T20:00:00Z",
+    "status": "TIMED",
+    "matchday": 10,
+    "stage": "REGULAR_SEASON",
+    "lastUpdated": "2026-11-03T01:32:01Z",
+    "competition": {
+      "id": 2021,
+      "name": "Premier League",
+      "code": "PL",
+      "type": "LEAGUE",
+      "emblem": "https://crests.football-data.org/PL.png"
+    },
+    "season": {
+      "id": 2502,
+      "startDate": "2026-08-21",
+      "endDate": "2027-05-30",
+      "currentMatchday": 9
+    },
+    "homeTeam": {
+      "id": 62,
+      "name": "Everton FC",
+      "shortName": "Everton",
+      "tla": "EVE",
+      "crest": "https://crests.football-data.org/62.png"
+    },
+    "awayTeam": {
+      "id": 1076,
+      "name": "Coventry City FC",
+      "shortName": "Coventry City",
+      "tla": "COV",
+      "crest": "https://crests.football-data.org/1076.png"
+    },
+    "score": {
+      "winner": null,
+      "duration": "REGULAR",
+      "fullTime": {
+        "home": null,
+        "away": null
+      },
+      "halfTime": {
+        "home": null,
+        "away": null
+      }
+    }
+  },
+  "extraTime": {
+    "id": 552063,
+    "utcDate": "2026-02-25T20:00:00Z",
+    "status": "FINISHED",
+    "matchday": 2,
+    "stage": "PLAYOFFS",
+    "lastUpdated": "2026-06-13T20:20:17Z",
+    "competition": {
+      "id": 2001,
+      "name": "UEFA Champions League",
+      "code": "CL",
+      "type": "CUP",
+      "emblem": "https://crests.football-data.org/CL.png"
+    },
+    "season": {
+      "id": 2454,
+      "startDate": "2025-09-16",
+      "endDate": "2026-05-30",
+      "currentMatchday": 8
+    },
+    "homeTeam": {
+      "id": 109,
+      "name": "Juventus FC",
+      "shortName": "Juventus",
+      "tla": "JUV",
+      "crest": "https://crests.football-data.org/109.png"
+    },
+    "awayTeam": {
+      "id": 610,
+      "name": "Galatasaray SK",
+      "shortName": "Galatasaray",
+      "tla": "GAL",
+      "crest": "https://crests.football-data.org/610.png"
+    },
+    "score": {
+      "winner": "HOME_TEAM",
+      "duration": "EXTRA_TIME",
+      "fullTime": {
+        "home": 3,
+        "away": 2
+      },
+      "halfTime": {
+        "home": 1,
+        "away": 0
+      },
+      "regularTime": {
+        "home": 3,
+        "away": 0
+      },
+      "extraTime": {
+        "home": 0,
+        "away": 2
+      }
+    }
+  },
+  "penalties": {
+    "id": 552096,
+    "utcDate": "2026-05-30T16:00:00Z",
+    "status": "FINISHED",
+    "matchday": null,
+    "stage": "FINAL",
+    "lastUpdated": "2026-06-13T20:20:17Z",
+    "competition": {
+      "id": 2001,
+      "name": "UEFA Champions League",
+      "code": "CL",
+      "type": "CUP",
+      "emblem": "https://crests.football-data.org/CL.png"
+    },
+    "season": {
+      "id": 2454,
+      "startDate": "2025-09-16",
+      "endDate": "2026-05-30",
+      "currentMatchday": 8
+    },
+    "homeTeam": {
+      "id": 524,
+      "name": "Paris Saint-Germain FC",
+      "shortName": "PSG",
+      "tla": "PSG",
+      "crest": "https://crests.football-data.org/524.png"
+    },
+    "awayTeam": {
+      "id": 57,
+      "name": "Arsenal FC",
+      "shortName": "Arsenal",
+      "tla": "ARS",
+      "crest": "https://crests.football-data.org/57.png"
+    },
+    "score": {
+      "winner": "HOME_TEAM",
+      "duration": "PENALTY_SHOOTOUT",
+      "fullTime": {
+        "home": 5,
+        "away": 4
+      },
+      "halfTime": {
+        "home": 0,
+        "away": 1
+      },
+      "regularTime": {
+        "home": 1,
+        "away": 1
+      },
+      "extraTime": {
+        "home": 0,
+        "away": 0
+      },
+      "penalties": {
+        "home": 4,
+        "away": 3
+      }
+    }
+  }
+}

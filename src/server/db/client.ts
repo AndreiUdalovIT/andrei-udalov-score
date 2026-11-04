@@ -13,8 +13,8 @@ if (!url) {
 }
 
 /**
- * The app's database. Every query is a single HTTP request with no open
- * connection — what serverless functions want. No transactions over HTTP:
- * the sync script has its own WebSocket client for those.
+ * HTTP database client without a persistent database connection.
+ * db.batch() runs statements in a non-interactive transaction.
+ * Interactive transactions require a WebSocket client.
  */
 export const db = drizzle({ client: neon(url), schema, casing: 'snake_case' });

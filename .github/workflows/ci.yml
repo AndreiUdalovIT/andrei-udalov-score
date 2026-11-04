@@ -20,7 +20,8 @@ jobs:
     # Match the Playwright version pinned in pnpm-lock.yaml.
     container:
       image: mcr.microsoft.com/playwright:v1.64.1-noble
-      options: --init --ipc=host
+      # Match the runner HOME ownership so Firefox can start.
+      options: --init --ipc=host --user 1001
     timeout-minutes: 15
     env:
       # Git hooks are not needed in CI.

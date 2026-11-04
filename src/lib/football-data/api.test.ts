@@ -15,6 +15,7 @@ vi.mock('server-only', () => ({}));
 
 vi.mock('./rate-limiter', () => ({
   createRateLimiter: () => ({
+    pause: () => undefined,
     run: <T>(task: () => Promise<T>) => task(),
   }),
 }));

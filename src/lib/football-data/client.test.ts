@@ -6,6 +6,7 @@ vi.mock('server-only', () => ({}));
 
 vi.mock('./rate-limiter', () => ({
   createRateLimiter: () => ({
+    pause: () => undefined,
     run: <T>(task: () => Promise<T>) => task(),
   }),
 }));
@@ -104,9 +105,16 @@ describe('football-data client', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it.each([401, 403, 404, 429, 500, 503])(
-    'preserves HTTP %i without exposing the response body',
-    async (status) => {
+  it.each([
+    { status: 401, attempts: 1 },
+    { status: 403, attempts: 1 },
+    { status: 404, attempts: 1 },
+    { status: 429, attempts: 3 },
+    { status: 500, attempts: 3 },
+    { status: 503, attempts: 3 },
+  ])(
+    'preserves HTTP $status without exposing the response body',
+    async ({ status, attempts }) => {
       fetchMock.mockResolvedValue(
         new Response('Sensitive upstream body', { status }),
       );
@@ -118,10 +126,11 @@ describe('football-data client', () => {
         status,
         retryAfter: null,
       });
+      expect(fetchMock).toHaveBeenCalledTimes(attempts);
     },
   );
 
-  it('preserves Retry-After for the retry policy', async () => {
+  it('preserves Retry-After when retries are exhausted', async () => {
     fetchMock.mockResolvedValue(
       new Response(null, { status: 429, headers: { 'Retry-After': '12' } }),
     );

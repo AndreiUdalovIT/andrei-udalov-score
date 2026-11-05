@@ -23,6 +23,7 @@
     "sync:standings": "node --conditions=react-server --import tsx scripts/sync-standings.ts",
     "sync:scorers": "node --conditions=react-server --import tsx scripts/sync-scorers.ts",
     "sync:squad": "node --conditions=react-server --import tsx scripts/sync-squad.ts",
+    "sync:full": "node --conditions=react-server --import tsx scripts/sync-full.ts",
     "prepare": "husky"
   },
   "lint-staged": {

@@ -4,6 +4,8 @@ import { parseArgs } from 'node:util';
 
 import { loadEnvConfig } from '@next/env';
 
+import { competitionOptions, parseCompetitionOptions } from './command-options';
+
 const USAGE =
   'Usage: pnpm sync:teams --competition CODE [--season YYYY]\n' +
   '       pnpm sync:teams --help\n\n' +
@@ -12,29 +14,13 @@ const USAGE =
 function parseOptions(args: string[]) {
   const { values } = parseArgs({
     args,
-    options: {
-      competition: { type: 'string' },
-      season: { type: 'string' },
-      help: { type: 'boolean', short: 'h' },
-    },
+    options: competitionOptions,
     allowPositionals: false,
   });
 
   if (values.help) return null;
 
-  const competitionCode = values.competition?.trim().toUpperCase();
-  if (
-    !competitionCode ||
-    !/^[A-Z][A-Z0-9]*$/.test(competitionCode) ||
-    (values.season !== undefined && !/^[1-9]\d{3}$/.test(values.season))
-  ) {
-    throw new Error('Invalid team sync options');
-  }
-
-  return {
-    competitionCode,
-    season: values.season === undefined ? undefined : Number(values.season),
-  };
+  return parseCompetitionOptions(values);
 }
 
 export async function runTeamsCommand(args: string[]) {

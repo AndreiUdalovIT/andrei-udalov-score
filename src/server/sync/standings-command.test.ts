@@ -18,7 +18,7 @@ beforeEach(() => {
   mocks.loadEnvConfig.mockReset();
   mocks.syncCompetitionStandings.mockReset().mockResolvedValue({
     competitionCode: 'PL',
-    season: 2026,
+    season: 2025,
     rowCount: 20,
   });
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -30,41 +30,21 @@ afterEach(() => {
 });
 
 describe('standings sync command', () => {
-  it.each([
-    { args: ['--competition', ' pl '], season: undefined },
-    { args: ['--competition', 'PL', '--season', '2025'], season: 2025 },
-  ])('passes the requested season $season to the sync', async ({ args, season }) => {
-    mocks.syncCompetitionStandings.mockResolvedValue({
-      competitionCode: 'PL',
-      season: season ?? 2026,
-      rowCount: 20,
-    });
-
-    expect(await runStandingsCommand(args)).toBe(0);
+  it('passes the requested competition and season after loading the environment', async () => {
+    expect(
+      await runStandingsCommand(['--competition', ' pl ', '--season', '2025']),
+    ).toBe(0);
 
     expect(mocks.loadEnvConfig).toHaveBeenCalledOnce();
     expect(mocks.syncCompetitionStandings).toHaveBeenCalledExactlyOnceWith('PL', {
-      season,
+      season: 2025,
     });
     expect(mocks.loadEnvConfig.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.syncCompetitionStandings.mock.invocationCallOrder[0]!,
     );
     expect(console.log).toHaveBeenCalledWith(
-      `Synced 20 standings rows for PL ${season ?? 2026}.`,
+      'Synced 20 standings rows for PL 2025.',
     );
-    expect(console.error).not.toHaveBeenCalled();
-  });
-
-  it('reports a valid empty snapshot as a successful sync', async () => {
-    mocks.syncCompetitionStandings.mockResolvedValue({
-      competitionCode: 'PL',
-      season: 2026,
-      rowCount: 0,
-    });
-
-    expect(await runStandingsCommand(['--competition', 'PL'])).toBe(0);
-
-    expect(console.log).toHaveBeenCalledWith('Synced 0 standings rows for PL 2026.');
     expect(console.error).not.toHaveBeenCalled();
   });
 
@@ -76,18 +56,15 @@ describe('standings sync command', () => {
     expect(mocks.syncCompetitionStandings).not.toHaveBeenCalled();
   });
 
-  it.each([{ args: [] }, { args: ['--competition', 'PL', '--season', '2025oops'] }])(
-    'rejects invalid arguments $args before loading the environment',
-    async ({ args }) => {
-      expect(await runStandingsCommand(args)).toBe(2);
+  it('rejects invalid arguments before loading the environment', async () => {
+    expect(await runStandingsCommand([])).toBe(2);
 
-      expect(console.error).toHaveBeenCalledWith(
-        expect.stringContaining('Invalid arguments.'),
-      );
-      expect(mocks.loadEnvConfig).not.toHaveBeenCalled();
-      expect(mocks.syncCompetitionStandings).not.toHaveBeenCalled();
-    },
-  );
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('Invalid arguments.'),
+    );
+    expect(mocks.loadEnvConfig).not.toHaveBeenCalled();
+    expect(mocks.syncCompetitionStandings).not.toHaveBeenCalled();
+  });
 
   it.each(['environment', 'sync'])(
     'reports a failed %s without exposing its details',

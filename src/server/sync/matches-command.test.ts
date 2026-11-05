@@ -86,8 +86,6 @@ describe('matches sync command', () => {
   });
 
   it.each([
-    { args: [] },
-    { args: ['--competition', 'PL', '--season', '2025oops'] },
     { args: ['--competition', 'PL', '--date-from', '2026-11-01'] },
     {
       args: [

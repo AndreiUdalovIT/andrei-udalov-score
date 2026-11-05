@@ -7,6 +7,8 @@ import { z } from 'zod';
 
 import { MATCH_STATUSES } from '@/lib/types/football';
 
+import { competitionOptions, parseCompetitionOptions } from './command-options';
+
 const dateSchema = z.iso.date();
 const statusSchema = z.enum(MATCH_STATUSES).optional();
 
@@ -21,26 +23,19 @@ function parseOptions(args: string[]) {
   const { values } = parseArgs({
     args,
     options: {
-      competition: { type: 'string' },
-      season: { type: 'string' },
+      ...competitionOptions,
       'date-from': { type: 'string' },
       'date-to': { type: 'string' },
       status: { type: 'string' },
-      help: { type: 'boolean', short: 'h' },
     },
     allowPositionals: false,
   });
 
   if (values.help) return null;
 
-  const competitionCode = values.competition?.trim().toUpperCase();
+  const { competitionCode, season } = parseCompetitionOptions(values);
   const status = statusSchema.safeParse(values.status?.trim().toUpperCase());
-  if (
-    !competitionCode ||
-    !/^[A-Z][A-Z0-9]*$/.test(competitionCode) ||
-    (values.season !== undefined && !/^[1-9]\d{3}$/.test(values.season)) ||
-    !status.success
-  ) {
+  if (!status.success) {
     throw new Error('Invalid match sync options');
   }
 
@@ -61,7 +56,7 @@ function parseOptions(args: string[]) {
 
   return {
     competitionCode,
-    season: values.season === undefined ? undefined : Number(values.season),
+    season,
     status: status.data,
     dateFrom,
     dateTo,

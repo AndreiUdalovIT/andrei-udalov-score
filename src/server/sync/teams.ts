@@ -74,5 +74,6 @@ export async function syncCompetitionTeams(
     competitionCode: rows.competition.code,
     season: seasonYear,
     teamCount: rows.teams.length,
+    teamIds: rows.teams.map((team) => team.id),
   };
 }

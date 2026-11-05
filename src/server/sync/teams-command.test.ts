@@ -20,6 +20,7 @@ beforeEach(() => {
     competitionCode: 'PL',
     season: 2025,
     teamCount: 20,
+    teamIds: Array.from({ length: 20 }, (_, index) => index + 1),
   });
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
   vi.spyOn(console, 'error').mockImplementation(() => undefined);

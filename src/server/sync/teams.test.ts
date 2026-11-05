@@ -58,6 +58,7 @@ describe('competition teams sync', () => {
       competitionCode: 'PL',
       season: 2026,
       teamCount: 1,
+      teamIds: [57],
     });
     expect(mocks.getCompetitionTeams).toHaveBeenCalledWith('PL', {
       season: undefined,

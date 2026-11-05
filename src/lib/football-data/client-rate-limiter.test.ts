@@ -23,8 +23,12 @@ afterEach(() => {
 
 describe('football-data client rate limiting', () => {
   it('shares the queue between clients with the same normalized token', async () => {
-    const first = createFootballDataClient({ token: ` ${TOKEN} ` });
-    const second = createFootballDataClient({ token: TOKEN });
+    const requestCounter = { count: 0 };
+    const first = createFootballDataClient({
+      token: ` ${TOKEN} `,
+      requestCounter,
+    });
+    const second = createFootballDataClient({ token: TOKEN, requestCounter });
     const requests = Promise.all([
       first.get('matches'),
       second.get('teams'),
@@ -32,10 +36,12 @@ describe('football-data client rate limiting', () => {
     ]);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(requestCounter.count).toBe(1);
     await vi.advanceTimersByTimeAsync(5_999);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(requestCounter.count).toBe(2);
     await vi.advanceTimersByTimeAsync(6_000);
 
     await expect(requests).resolves.toEqual([
@@ -48,6 +54,7 @@ describe('football-data client rate limiting', () => {
       'https://api.football-data.org/v4/teams',
       'https://api.football-data.org/v4/competitions',
     ]);
+    expect(requestCounter.count).toBe(3);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -90,7 +97,8 @@ describe('football-data client rate limiting', () => {
   });
 
   it('does not take a slot for an unsafe path or an already aborted request', async () => {
-    const client = createFootballDataClient({ token: TOKEN });
+    const requestCounter = { count: 0 };
+    const client = createFootballDataClient({ token: TOKEN, requestCounter });
 
     await expect(client.get('../teams')).rejects.toThrow(
       'football-data path must stay within the v4 API',
@@ -102,8 +110,10 @@ describe('football-data client rate limiting', () => {
     ).rejects.toMatchObject({ name: 'AbortError' });
 
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(requestCounter.count).toBe(0);
     await expect(client.get('matches')).resolves.toEqual({ matches: [] });
     expect(fetchMock).toHaveBeenCalledOnce();
+    expect(requestCounter.count).toBe(1);
     expect(vi.getTimerCount()).toBe(0);
   });
 

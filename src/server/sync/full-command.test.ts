@@ -2,20 +2,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { syncFullCompetitions } from './full';
 import { runFullCommand } from './full-command';
+import type { runSync } from './run';
 
 const mocks = vi.hoisted(() => ({
   loadEnvConfig: vi.fn(),
+  runSync: vi.fn<typeof runSync>(),
   syncFullCompetitions: vi.fn<typeof syncFullCompetitions>(),
 }));
 
 vi.mock('server-only', () => ({}));
 vi.mock('@next/env', () => ({ loadEnvConfig: mocks.loadEnvConfig }));
+vi.mock('./run', () => ({ runSync: mocks.runSync }));
 vi.mock('./full', () => ({
   syncFullCompetitions: mocks.syncFullCompetitions,
 }));
 
 beforeEach(() => {
   mocks.loadEnvConfig.mockReset();
+  mocks.runSync
+    .mockReset()
+    .mockImplementation(async (_mode, task) => task({ count: 0 }));
   mocks.syncFullCompetitions.mockReset().mockResolvedValue({
     competitions: [
       {
@@ -56,9 +62,16 @@ describe('full sync command', () => {
 
     expect(exitCode).toBe(0);
     expect(mocks.loadEnvConfig).toHaveBeenCalledOnce();
-    expect(mocks.syncFullCompetitions).toHaveBeenCalledExactlyOnceWith(['PL', 'CL']);
+    expect(mocks.runSync).toHaveBeenCalledExactlyOnceWith(
+      'full',
+      expect.any(Function),
+    );
+    expect(mocks.syncFullCompetitions).toHaveBeenCalledExactlyOnceWith(
+      ['PL', 'CL'],
+      { requestCounter: { count: 0 } },
+    );
     expect(mocks.loadEnvConfig.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.syncFullCompetitions.mock.invocationCallOrder[0]!,
+      mocks.runSync.mock.invocationCallOrder[0]!,
     );
     expect(console.log).toHaveBeenCalledTimes(3);
     expect(console.log).toHaveBeenNthCalledWith(
@@ -83,6 +96,7 @@ describe('full sync command', () => {
 
     expect(exitCode).toBe(2);
     expect(mocks.loadEnvConfig).not.toHaveBeenCalled();
+    expect(mocks.runSync).not.toHaveBeenCalled();
     expect(mocks.syncFullCompetitions).not.toHaveBeenCalled();
     expect(console.log).not.toHaveBeenCalled();
     expect(console.error).toHaveBeenCalledWith(

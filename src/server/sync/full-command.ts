@@ -66,10 +66,12 @@ export async function runFullCommand(args: string[]) {
     }
     console.log(`Synced ${squadCount} unique team squads.`);
     return 0;
-  } catch {
+  } catch (error) {
     // Import and environment errors can also contain connection details.
     console.error(
-      'Full sync failed. Check DATABASE_URL, FOOTBALL_DATA_TOKEN and API access.',
+      error instanceof Error && error.name === 'SyncAlreadyRunningError'
+        ? 'Another sync run is already running. Check the sync run journal.'
+        : 'Full sync failed. Check DATABASE_URL, FOOTBALL_DATA_TOKEN and API access.',
     );
     return 1;
   }

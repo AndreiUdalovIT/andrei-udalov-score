@@ -7,6 +7,13 @@ import type { ClientOptions } from '@/lib/football-data/client';
 import { db } from '../db/client';
 import { syncRuns, type SyncMode, type SyncStatus } from '../db/schema';
 
+export class SyncAlreadyRunningError extends Error {
+  constructor() {
+    super('another sync run is already running');
+    this.name = 'SyncAlreadyRunningError';
+  }
+}
+
 async function finishRun(
   runId: number,
   status: Exclude<SyncStatus, 'running'>,
@@ -37,19 +44,26 @@ export async function runSync<T>(
   mode: SyncMode,
   task: (requestCounter: NonNullable<ClientOptions['requestCounter']>) => Promise<T>,
 ) {
-  let runId: number;
+  let runId: number | undefined;
   try {
-    const [[run]] = await db.batch([
-      db
-        .insert(syncRuns)
-        .values({ mode, status: 'running' })
-        .returning({ id: syncRuns.id }),
+    // Serialize the check and insert, then release the table lock before API work.
+    const [, , started] = await db.batch([
+      db.execute(sql`set transaction isolation level read committed`),
+      db.execute(sql`lock table ${syncRuns} in share row exclusive mode`),
+      db.execute<{ id: number }>(sql`
+        insert into ${syncRuns} ("mode", "status")
+        select ${mode}, 'running'
+        where not exists (
+          select 1 from ${syncRuns} where ${syncRuns.status} = 'running'
+        )
+        returning ${syncRuns.id}
+      `),
     ]);
-    if (!run) throw new Error('Missing sync run');
-    runId = run.id;
+    runId = started.rows[0]?.id;
   } catch {
     throw new Error('sync run could not be started');
   }
+  if (runId === undefined) throw new SyncAlreadyRunningError();
 
   const requestCounter = { count: 0 };
   let result: T;

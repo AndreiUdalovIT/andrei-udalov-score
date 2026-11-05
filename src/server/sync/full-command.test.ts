@@ -104,6 +104,22 @@ describe('full sync command', () => {
     );
   });
 
+  it('explains an active run without starting the full sync', async () => {
+    mocks.runSync.mockRejectedValueOnce(
+      Object.assign(new Error('Sensitive error details'), {
+        name: 'SyncAlreadyRunningError',
+      }),
+    );
+
+    expect(await runFullCommand(['--competition', 'PL'])).toBe(1);
+
+    expect(console.error).toHaveBeenCalledExactlyOnceWith(
+      'Another sync run is already running. Check the sync run journal.',
+    );
+    expect(mocks.syncFullCompetitions).not.toHaveBeenCalled();
+    expect(console.log).not.toHaveBeenCalled();
+  });
+
   it('reports a failed full sync without printing success or error details', async () => {
     mocks.syncFullCompetitions.mockRejectedValueOnce(
       new Error('Sensitive connection details'),

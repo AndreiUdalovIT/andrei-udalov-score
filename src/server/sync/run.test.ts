@@ -1,13 +1,11 @@
+import type { SQLWrapper } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { runSync } from './run';
-
-type BatchQuery = {
-  toSQL(): { sql: string; params: unknown[] };
-};
+import { runSync, SyncAlreadyRunningError } from './run';
 
 const mocks = vi.hoisted(() => ({
-  batch: vi.fn<(queries: readonly BatchQuery[]) => Promise<{ id: number }[][]>>(),
+  batch: vi.fn<(queries: readonly SQLWrapper[]) => Promise<unknown[]>>(),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -19,14 +17,20 @@ vi.mock('../db/client', async () => {
   return { db: database };
 });
 
-function getQuery(callIndex: number) {
-  const query = mocks.batch.mock.calls[callIndex]?.[0][0];
+function getQuery(callIndex: number, queryIndex = 0) {
+  const query = mocks.batch.mock.calls[callIndex]?.[0][queryIndex];
   if (!query) throw new Error('Missing captured query');
-  return query.toSQL();
+  return new PgDialect({ casing: 'snake_case' }).sqlToQuery(query.getSQL());
 }
 
+const startedRun = [{ rows: [] }, { rows: [] }, { rows: [{ id: 42 }] }];
+
 beforeEach(() => {
-  mocks.batch.mockReset().mockResolvedValue([[{ id: 42 }]]);
+  mocks.batch
+    .mockReset()
+    .mockImplementation(async (queries) =>
+      queries.length === 3 ? startedRun : [[{ id: 42 }]],
+    );
 });
 
 describe('sync run journal', () => {
@@ -34,7 +38,15 @@ describe('sync run journal', () => {
     const value = { squadCount: 20 };
     const result = await runSync('full', async (requestCounter) => {
       expect(mocks.batch).toHaveBeenCalledOnce();
-      expect(getQuery(0).params).toEqual(['full', 'running']);
+      expect(mocks.batch.mock.calls[0]?.[0]).toHaveLength(3);
+      expect(getQuery(0).sql).toBe('set transaction isolation level read committed');
+      expect(getQuery(0, 1).sql).toBe(
+        'lock table "sync_runs" in share row exclusive mode',
+      );
+      const startQuery = getQuery(0, 2);
+      expect(startQuery.sql).toContain('where not exists (');
+      expect(startQuery.sql).toContain(`where "sync_runs"."status" = 'running'`);
+      expect(startQuery.params).toEqual(['full']);
       expect(requestCounter.count).toBe(0);
       requestCounter.count = 3;
       return value;
@@ -70,6 +82,19 @@ describe('sync run journal', () => {
     ]);
   });
 
+  it('rejects another mode before calling its task when a run is active', async () => {
+    mocks.batch.mockResolvedValueOnce([{ rows: [] }, { rows: [] }, { rows: [] }]);
+    const task = vi.fn(async () => undefined);
+
+    await expect(runSync('light', task)).rejects.toBeInstanceOf(
+      SyncAlreadyRunningError,
+    );
+
+    expect(task).not.toHaveBeenCalled();
+    expect(mocks.batch).toHaveBeenCalledOnce();
+    expect(getQuery(0, 2).params).toEqual(['light']);
+  });
+
   it('stops before calling the task when the running record cannot be saved', async () => {
     mocks.batch.mockRejectedValueOnce(new Error('Sensitive database details'));
     const task = vi.fn(async () => undefined);
@@ -84,7 +109,7 @@ describe('sync run journal', () => {
   it.each(['write error', 'missing run'])(
     'reports an unsuccessful finalization caused by %s',
     async (scenario) => {
-      mocks.batch.mockResolvedValueOnce([[{ id: 42 }]]);
+      mocks.batch.mockResolvedValueOnce(startedRun);
       if (scenario === 'write error') {
         mocks.batch.mockRejectedValueOnce(new Error('Sensitive database details'));
       } else {

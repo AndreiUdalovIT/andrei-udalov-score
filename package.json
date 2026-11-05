@@ -20,6 +20,7 @@
     "db:studio": "drizzle-kit studio",
     "sync:teams": "node --conditions=react-server --import tsx scripts/sync-teams.ts",
     "sync:matches": "node --conditions=react-server --import tsx scripts/sync-matches.ts",
+    "sync:standings": "node --conditions=react-server --import tsx scripts/sync-standings.ts",
     "prepare": "husky"
   },
   "lint-staged": {

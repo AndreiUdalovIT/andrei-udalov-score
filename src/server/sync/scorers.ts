@@ -3,6 +3,7 @@ import 'server-only';
 import { and, eq } from 'drizzle-orm';
 
 import { createFootballDataApi } from '@/lib/football-data/api';
+import type { ClientOptions } from '@/lib/football-data/client';
 import { mapScorers } from '@/lib/football-data/mappers/scorers';
 import type { ApiScorersResponse } from '@/lib/football-data/schemas/scorers';
 
@@ -12,14 +13,15 @@ import { scorers } from '../db/schema';
 type ScorersSyncOptions = {
   season?: number;
   signal?: AbortSignal;
+  requestCounter?: ClientOptions['requestCounter'];
 };
 
 // Sync the competition and its season's teams before saving scorers.
 export async function syncCompetitionScorers(
   competitionCode: string,
-  { season, signal }: ScorersSyncOptions = {},
+  { season, signal, requestCounter }: ScorersSyncOptions = {},
 ) {
-  const api = createFootballDataApi();
+  const api = createFootballDataApi({ requestCounter });
   let limit = 1_000;
   let response: ApiScorersResponse;
 

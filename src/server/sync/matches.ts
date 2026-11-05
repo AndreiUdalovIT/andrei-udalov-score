@@ -3,6 +3,7 @@ import 'server-only';
 import { sql } from 'drizzle-orm';
 
 import { createFootballDataApi } from '@/lib/football-data/api';
+import type { ClientOptions } from '@/lib/football-data/client';
 import { mapMatch } from '@/lib/football-data/mappers/matches';
 import type { MatchStatus } from '@/lib/types/football';
 
@@ -15,14 +16,15 @@ type MatchesSyncOptions = {
   dateFrom?: string;
   dateTo?: string;
   signal?: AbortSignal;
+  requestCounter?: ClientOptions['requestCounter'];
 };
 
 // Sync the competition and its season's teams before saving their matches.
 export async function syncCompetitionMatches(
   competitionCode: string,
-  options: MatchesSyncOptions = {},
+  { requestCounter, ...options }: MatchesSyncOptions = {},
 ) {
-  const api = createFootballDataApi();
+  const api = createFootballDataApi({ requestCounter });
   const response = await api.getCompetitionMatches(competitionCode, options);
   if (options.signal?.aborted) {
     throw new DOMException('football-data match sync aborted', 'AbortError');

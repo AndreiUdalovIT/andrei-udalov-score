@@ -3,6 +3,7 @@ import 'server-only';
 import { and, eq } from 'drizzle-orm';
 
 import { createFootballDataApi } from '@/lib/football-data/api';
+import type { ClientOptions } from '@/lib/football-data/client';
 import { mapStandings } from '@/lib/football-data/mappers/standings';
 
 import { db } from '../db/client';
@@ -11,14 +12,15 @@ import { standings } from '../db/schema';
 type StandingsSyncOptions = {
   season?: number;
   signal?: AbortSignal;
+  requestCounter?: ClientOptions['requestCounter'];
 };
 
 // Sync the competition and its season's teams before saving standings.
 export async function syncCompetitionStandings(
   competitionCode: string,
-  { season, signal }: StandingsSyncOptions = {},
+  { season, signal, requestCounter }: StandingsSyncOptions = {},
 ) {
-  const api = createFootballDataApi();
+  const api = createFootballDataApi({ requestCounter });
   const response = await api.getCompetitionStandings(competitionCode, {
     season,
     signal,

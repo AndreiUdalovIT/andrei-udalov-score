@@ -3,6 +3,7 @@ import 'server-only';
 import { eq, sql } from 'drizzle-orm';
 
 import { createFootballDataApi } from '@/lib/football-data/api';
+import type { ClientOptions } from '@/lib/football-data/client';
 import { mapSquad } from '@/lib/football-data/mappers/squad';
 
 import { db } from '../db/client';
@@ -10,13 +11,14 @@ import { squadPlayers, teams } from '../db/schema';
 
 type SquadSyncOptions = {
   signal?: AbortSignal;
+  requestCounter?: ClientOptions['requestCounter'];
 };
 
 export async function syncTeamSquad(
   teamId: number,
-  { signal }: SquadSyncOptions = {},
+  { signal, requestCounter }: SquadSyncOptions = {},
 ) {
-  const api = createFootballDataApi();
+  const api = createFootballDataApi({ requestCounter });
   const response = await api.getTeamSquad(teamId, { signal });
   if (signal?.aborted) {
     throw new DOMException('football-data squad sync aborted', 'AbortError');

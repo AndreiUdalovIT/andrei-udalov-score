@@ -76,9 +76,12 @@ describe('full competition sync', () => {
         teamCount: 2,
         teamIds: [57, 851],
       });
-    const signal = new AbortController().signal;
+    const options = {
+      signal: new AbortController().signal,
+      requestCounter: { count: 0 },
+    };
 
-    const result = syncFullCompetitions([' pl ', 'CL', 'PL'], { signal });
+    const result = syncFullCompetitions([' pl ', 'CL', 'PL'], options);
     expect(mocks.syncCompetitionMatches).not.toHaveBeenCalled();
     expect(mocks.syncCompetitionStandings).not.toHaveBeenCalled();
     expect(mocks.syncCompetitionScorers).not.toHaveBeenCalled();
@@ -107,20 +110,20 @@ describe('full competition sync', () => {
       squadCount: 3,
     });
     expect(mocks.syncCompetitionTeams).toHaveBeenCalledTimes(2);
-    expect(mocks.syncCompetitionTeams).toHaveBeenNthCalledWith(1, 'PL', { signal });
-    expect(mocks.syncCompetitionTeams).toHaveBeenNthCalledWith(2, 'CL', { signal });
+    expect(mocks.syncCompetitionTeams).toHaveBeenNthCalledWith(1, 'PL', options);
+    expect(mocks.syncCompetitionTeams).toHaveBeenNthCalledWith(2, 'CL', options);
     for (const syncDataset of [
       mocks.syncCompetitionMatches,
       mocks.syncCompetitionStandings,
       mocks.syncCompetitionScorers,
     ]) {
       expect(syncDataset).toHaveBeenCalledTimes(2);
-      expect(syncDataset).toHaveBeenCalledWith('PL', { season: 2026, signal });
-      expect(syncDataset).toHaveBeenCalledWith('CL', { season: 2025, signal });
+      expect(syncDataset).toHaveBeenCalledWith('PL', { season: 2026, ...options });
+      expect(syncDataset).toHaveBeenCalledWith('CL', { season: 2025, ...options });
     }
     expect(mocks.syncTeamSquad).toHaveBeenCalledTimes(3);
     for (const teamId of [57, 65, 851]) {
-      expect(mocks.syncTeamSquad).toHaveBeenCalledWith(teamId, { signal });
+      expect(mocks.syncTeamSquad).toHaveBeenCalledWith(teamId, options);
     }
   });
 

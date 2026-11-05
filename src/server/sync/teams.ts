@@ -3,6 +3,7 @@ import 'server-only';
 import { and, eq, sql } from 'drizzle-orm';
 
 import { createFootballDataApi } from '@/lib/football-data/api';
+import type { ClientOptions } from '@/lib/football-data/client';
 import { mapCompetitionTeams } from '@/lib/football-data/mappers/teams';
 
 import { db } from '../db/client';
@@ -11,13 +12,14 @@ import { competitions, teamCompetitions, teams } from '../db/schema';
 type TeamsSyncOptions = {
   season?: number;
   signal?: AbortSignal;
+  requestCounter?: ClientOptions['requestCounter'];
 };
 
 export async function syncCompetitionTeams(
   competitionCode: string,
-  { season, signal }: TeamsSyncOptions = {},
+  { season, signal, requestCounter }: TeamsSyncOptions = {},
 ) {
-  const api = createFootballDataApi();
+  const api = createFootballDataApi({ requestCounter });
   const response = await api.getCompetitionTeams(competitionCode, {
     season,
     signal,

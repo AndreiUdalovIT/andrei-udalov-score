@@ -32,6 +32,71 @@ afterEach(() => {
   fetchMock.mockReset();
 });
 
+describe('getCompetition', () => {
+  const response = {
+    ...fixture.competition,
+    currentSeason: fixture.season,
+    seasons: [
+      fixture.season,
+      {
+        id: 2501,
+        startDate: '2025-08-15',
+        endDate: '2026-05-24',
+        currentMatchday: 38,
+        winner: null,
+      },
+    ],
+  };
+
+  it('loads the season catalog and normalizes the competition code', async () => {
+    fetchMock.mockResolvedValue(Response.json(response));
+    const api = createFootballDataApi({ token: TOKEN });
+
+    const result = await api.getCompetition(' pl ');
+
+    expect(result.code).toBe('PL');
+    expect(result.currentSeason.startDate).toBe(fixture.season.startDate);
+    expect(result.seasons.map((season) => season.startDate)).toEqual([
+      '2026-08-21',
+      '2025-08-15',
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL('https://api.football-data.org/v4/competitions/PL'),
+      expect.any(Object),
+    );
+  });
+
+  it('rejects a catalog belonging to a different competition', async () => {
+    fetchMock.mockResolvedValue(Response.json({ ...response, code: 'PD' }));
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getCompetition('PL')).rejects.toMatchObject({
+      name: 'FootballDataValidationError',
+      resource: 'competitions/PL',
+      issues: [{ code: 'custom', path: ['code'] }],
+    });
+  });
+
+  it('rejects an invalid historical date through the shared validation error', async () => {
+    fetchMock.mockResolvedValue(
+      Response.json({
+        ...response,
+        seasons: [
+          response.seasons[0],
+          { ...response.seasons[1], startDate: '2025-02-30' },
+        ],
+      }),
+    );
+    const api = createFootballDataApi({ token: TOKEN });
+
+    await expect(api.getCompetition('PL')).rejects.toMatchObject({
+      name: 'FootballDataValidationError',
+      resource: 'competitions/PL',
+      issues: [{ code: 'invalid_format', path: ['seasons', 1, 'startDate'] }],
+    });
+  });
+});
+
 describe('getCompetitionTeams', () => {
   it('loads the current season and returns validated team data', async () => {
     fetchMock.mockResolvedValue(Response.json(fixture));

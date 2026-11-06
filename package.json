@@ -25,6 +25,7 @@
     "sync:squad": "node --conditions=react-server --import tsx scripts/sync-squad.ts",
     "sync:full": "node --conditions=react-server --import tsx scripts/sync-full.ts",
     "sync:light": "node --conditions=react-server --import tsx scripts/sync-light.ts",
+    "sync:seed": "node --conditions=react-server --import tsx scripts/sync-seed.ts",
     "prepare": "husky"
   },
   "lint-staged": {

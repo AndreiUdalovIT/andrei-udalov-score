@@ -54,8 +54,10 @@ export async function runFullCommand(args: string[]) {
     });
     const { runSync } = await import('./run');
     const { syncFullCompetitions } = await import('./full');
-    const { competitions, squadCount } = await runSync('full', (requestCounter) =>
-      syncFullCompetitions(competitionCodes, { requestCounter }),
+    const { competitions, squadCount } = await runSync(
+      'full',
+      competitionCodes,
+      (requestCounter) => syncFullCompetitions(competitionCodes, { requestCounter }),
     );
     for (const competition of competitions) {
       console.log(

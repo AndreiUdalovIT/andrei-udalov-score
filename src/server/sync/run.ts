@@ -7,6 +7,8 @@ import type { ClientOptions } from '@/lib/football-data/client';
 import { db } from '../db/client';
 import { syncRuns, type SyncMode, type SyncStatus } from '../db/schema';
 
+import { parseCompetitionOptions } from './command-options';
+
 export class SyncAlreadyRunningError extends Error {
   constructor() {
     super('another sync run is already running');
@@ -42,8 +44,20 @@ async function finishRun(
 
 export async function runSync<T>(
   mode: SyncMode,
+  competitionCodes: readonly string[],
   task: (requestCounter: NonNullable<ClientOptions['requestCounter']>) => Promise<T>,
 ) {
+  if (competitionCodes.length === 0) {
+    throw new Error('At least one competition is required');
+  }
+  const codes = [
+    ...new Set(
+      competitionCodes.map(
+        (competition) => parseCompetitionOptions({ competition }).competitionCode,
+      ),
+    ),
+  ].sort();
+
   let runId: number | undefined;
   try {
     // Serialize the check and insert, then release the table lock before API work.
@@ -51,8 +65,8 @@ export async function runSync<T>(
       db.execute(sql`set transaction isolation level read committed`),
       db.execute(sql`lock table ${syncRuns} in share row exclusive mode`),
       db.execute<{ id: number }>(sql`
-        insert into ${syncRuns} ("mode", "status")
-        select ${mode}, 'running'
+        insert into ${syncRuns} ("mode", "status", "competition_codes")
+        select ${mode}, 'running', ${sql.param(codes, syncRuns.competitionCodes)}::text[]
         where not exists (
           select 1 from ${syncRuns} where ${syncRuns.status} = 'running'
         )

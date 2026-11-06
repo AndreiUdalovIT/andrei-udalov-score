@@ -157,12 +157,14 @@ export type SyncMode = 'light' | 'full' | 'seed';
 export type SyncStatus = 'running' | 'ok' | 'error';
 
 /**
- * One row per sync run. «Обновлено N ч назад» reads the latest `ok`, so a
- * run that died while `running` does not hide the last good one.
+ * One row per sync run. Freshness queries use successful runs that cover the
+ * requested competitions. Legacy runs have an unknown scope.
  */
 export const syncRuns = pgTable('sync_runs', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
   mode: text().$type<SyncMode>().notNull(),
+  /** Normalized competition codes. Null means the scope of a legacy run is unknown. */
+  competitionCodes: text().array(),
   status: text().$type<SyncStatus>().notNull(),
   startedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp({ withTimezone: true }),

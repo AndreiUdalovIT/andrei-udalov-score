@@ -15,6 +15,13 @@
       "when": 1793713824000,
       "tag": "0001_nullable_scorer_stats",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793923142624,
+      "tag": "0002_sync_run_competitions",
+      "breakpoints": true
     }
   ]
 }

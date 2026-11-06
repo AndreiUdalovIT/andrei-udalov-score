@@ -21,7 +21,7 @@ beforeEach(() => {
   mocks.loadEnvConfig.mockReset();
   mocks.runSync
     .mockReset()
-    .mockImplementation(async (_mode, task) => task({ count: 0 }));
+    .mockImplementation(async (_mode, _codes, task) => task({ count: 0 }));
   mocks.syncFullCompetitions.mockReset().mockResolvedValue({
     competitions: [
       {
@@ -64,6 +64,7 @@ describe('full sync command', () => {
     expect(mocks.loadEnvConfig).toHaveBeenCalledOnce();
     expect(mocks.runSync).toHaveBeenCalledExactlyOnceWith(
       'full',
+      ['PL', 'CL'],
       expect.any(Function),
     );
     expect(mocks.syncFullCompetitions).toHaveBeenCalledExactlyOnceWith(

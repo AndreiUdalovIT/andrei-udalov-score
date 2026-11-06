@@ -36,7 +36,8 @@ beforeEach(() => {
 describe('sync run journal', () => {
   it('starts a running record before the task and saves success with its request count', async () => {
     const value = { squadCount: 20 };
-    const result = await runSync('full', async (requestCounter) => {
+    const codes = [' pl ', 'CL', 'PL'];
+    const result = await runSync('full', codes, async (requestCounter) => {
       expect(mocks.batch).toHaveBeenCalledOnce();
       expect(mocks.batch.mock.calls[0]?.[0]).toHaveLength(3);
       expect(getQuery(0).sql).toBe('set transaction isolation level read committed');
@@ -46,7 +47,7 @@ describe('sync run journal', () => {
       const startQuery = getQuery(0, 2);
       expect(startQuery.sql).toContain('where not exists (');
       expect(startQuery.sql).toContain(`where "sync_runs"."status" = 'running'`);
-      expect(startQuery.params).toEqual(['full']);
+      expect(startQuery.params).toEqual(['full', '{"CL","PL"}']);
       expect(requestCounter.count).toBe(0);
       requestCounter.count = 3;
       return value;
@@ -66,7 +67,7 @@ describe('sync run journal', () => {
     const error = new Error('Sensitive connection details');
 
     await expect(
-      runSync('full', async (requestCounter) => {
+      runSync('full', ['PL'], async (requestCounter) => {
         requestCounter.count = 4;
         throw error;
       }),
@@ -86,19 +87,31 @@ describe('sync run journal', () => {
     mocks.batch.mockResolvedValueOnce([{ rows: [] }, { rows: [] }, { rows: [] }]);
     const task = vi.fn(async () => undefined);
 
-    await expect(runSync('light', task)).rejects.toBeInstanceOf(
+    await expect(runSync('light', ['CL'], task)).rejects.toBeInstanceOf(
       SyncAlreadyRunningError,
     );
 
     expect(task).not.toHaveBeenCalled();
     expect(mocks.batch).toHaveBeenCalledOnce();
-    expect(getQuery(0, 2).params).toEqual(['light']);
+    expect(getQuery(0, 2).params).toEqual(['light', '{"CL"}']);
   });
+
+  it.each([{ codes: [] }, { codes: ['PL', '../CL'] }])(
+    'rejects an invalid scope $codes before starting a run',
+    async ({ codes }) => {
+      const task = vi.fn(async () => undefined);
+
+      await expect(runSync('full', codes, task)).rejects.toThrow();
+
+      expect(task).not.toHaveBeenCalled();
+      expect(mocks.batch).not.toHaveBeenCalled();
+    },
+  );
 
   it('stops before calling the task when the running record cannot be saved', async () => {
     mocks.batch.mockRejectedValueOnce(new Error('Sensitive database details'));
     const task = vi.fn(async () => undefined);
-    const result = runSync('full', task);
+    const result = runSync('full', ['PL'], task);
 
     await expect(result).rejects.toThrow('sync run could not be started');
     await expect(result).rejects.not.toHaveProperty('cause');
@@ -119,7 +132,7 @@ describe('sync run journal', () => {
         requestCounter.count = 2;
         return 'saved';
       });
-      const result = runSync('full', task);
+      const result = runSync('full', ['PL'], task);
 
       await expect(result).rejects.toThrow('sync run status could not be saved');
       await expect(result).rejects.not.toHaveProperty('cause');

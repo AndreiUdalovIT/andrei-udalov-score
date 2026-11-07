@@ -6,6 +6,10 @@ import { MATCH_STATUSES, type MatchStatus } from '@/lib/types/football';
 
 import { createFootballDataClient, type ClientOptions } from './client';
 import {
+  competitionResponseSchema,
+  type ApiCompetitionResponse,
+} from './schemas/competition';
+import {
   matchSchema,
   matchesResponseSchema,
   type ApiMatchesResponse,
@@ -20,6 +24,10 @@ import {
 import { teamsResponseSchema, type ApiTeamsResponse } from './schemas/teams';
 
 const dateSchema = z.iso.date();
+
+type CompetitionDetailsOptions = {
+  signal?: AbortSignal;
+};
 
 type CompetitionOptions = {
   season?: number;
@@ -80,6 +88,24 @@ export function createFootballDataApi(options: ClientOptions = {}) {
   const client = createFootballDataClient(options);
 
   return {
+    async getCompetition(
+      competitionCode: string,
+      { signal }: CompetitionDetailsOptions = {},
+    ): Promise<ApiCompetitionResponse> {
+      const code = normalizeCompetitionCode(competitionCode);
+      const resource = `competitions/${code}`;
+      const data = await client.get(resource, { signal });
+      const schema = competitionResponseSchema.refine(
+        (response) => response.code === code,
+        { path: ['code'], message: 'Unexpected competition' },
+      );
+      const result = schema.safeParse(data);
+      if (!result.success) {
+        throw new FootballDataValidationError(resource, result.error);
+      }
+      return result.data;
+    },
+
     async getCompetitionTeams(
       competitionCode: string,
       { season, signal }: CompetitionOptions = {},

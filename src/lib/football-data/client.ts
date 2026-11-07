@@ -11,6 +11,8 @@ const rateLimiters = new Map<string, ReturnType<typeof createRateLimiter>>();
 export type ClientOptions = {
   token?: string;
   timeoutMs?: number;
+  /** HTTP attempts started, including retries. Share one counter per sync run. */
+  requestCounter?: { count: number };
 };
 
 type GetOptions = {
@@ -66,6 +68,7 @@ function getRetryDelay(
 export function createFootballDataClient({
   token = process.env.FOOTBALL_DATA_TOKEN,
   timeoutMs = 10_000,
+  requestCounter,
 }: ClientOptions = {}) {
   const authToken = token?.trim();
   if (!authToken) throw new Error('FOOTBALL_DATA_TOKEN is not set');
@@ -106,6 +109,7 @@ export function createFootballDataClient({
 
         try {
           requestSignal.throwIfAborted();
+          if (requestCounter) requestCounter.count += 1;
           const response = await fetch(url, {
             method: 'GET',
             headers: { 'X-Auth-Token': authToken, Accept: 'application/json' },

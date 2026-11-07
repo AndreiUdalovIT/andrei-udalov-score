@@ -54,7 +54,8 @@ describe('football-data client retries', () => {
 
   it('stops after three attempts and preserves the final quota cooldown', async () => {
     fetchMock.mockImplementation(async () => new Response(null, { status: 429 }));
-    const client = createFootballDataClient({ token: TOKEN });
+    const requestCounter = { count: 0 };
+    const client = createFootballDataClient({ token: TOKEN, requestCounter });
     const assertion = expect(client.get('matches')).rejects.toMatchObject({
       name: 'FootballDataHttpError',
       status: 429,
@@ -70,6 +71,7 @@ describe('football-data client retries', () => {
     await vi.advanceTimersByTimeAsync(1);
     await assertion;
     expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(requestCounter.count).toBe(3);
     expect(vi.getTimerCount()).toBe(0);
 
     fetchMock.mockImplementation(async () => Response.json({ matches: [] }));
@@ -80,6 +82,7 @@ describe('football-data client retries', () => {
 
     await expect(next).resolves.toEqual({ matches: [] });
     expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(requestCounter.count).toBe(4);
     expect(vi.getTimerCount()).toBe(0);
   });
 

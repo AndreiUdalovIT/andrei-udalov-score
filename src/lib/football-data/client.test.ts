@@ -155,13 +155,15 @@ describe('football-data client', () => {
 
   it('does not expose the original network error or its credentials', async () => {
     fetchMock.mockRejectedValue(new Error(`Failed with token ${TOKEN}`));
-    const client = createFootballDataClient({ token: TOKEN });
+    const requestCounter = { count: 0 };
+    const client = createFootballDataClient({ token: TOKEN, requestCounter });
 
     const request = client.get('matches');
     await expect(request).rejects.toMatchObject({
       message: 'football-data request failed',
     });
     await expect(request).rejects.not.toHaveProperty('cause');
+    expect(requestCounter.count).toBe(1);
   });
 
   it('does not send an already aborted request', async () => {

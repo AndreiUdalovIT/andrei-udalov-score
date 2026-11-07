@@ -18,6 +18,14 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
+    "sync:teams": "node --conditions=react-server --import tsx scripts/sync-teams.ts",
+    "sync:matches": "node --conditions=react-server --import tsx scripts/sync-matches.ts",
+    "sync:standings": "node --conditions=react-server --import tsx scripts/sync-standings.ts",
+    "sync:scorers": "node --conditions=react-server --import tsx scripts/sync-scorers.ts",
+    "sync:squad": "node --conditions=react-server --import tsx scripts/sync-squad.ts",
+    "sync:full": "node --conditions=react-server --import tsx scripts/sync-full.ts",
+    "sync:light": "node --conditions=react-server --import tsx scripts/sync-light.ts",
+    "sync:seed": "node --conditions=react-server --import tsx scripts/sync-seed.ts",
     "prepare": "husky"
   },
   "lint-staged": {

@@ -1,0 +1,70 @@
+name: Sync football data
+run-name: Manual ${{ inputs.mode }} sync for ${{ inputs.competitions }} (development)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Sync mode
+        required: true
+        default: light
+        type: choice
+        options:
+          - light
+          - full
+      competitions:
+        description: Competition codes separated by spaces, e.g. PL CL
+        required: true
+        default: PL
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-data-sync
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    environment: development
+    timeout-minutes: 45
+    env:
+      HUSKY: 0
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Sync selected competitions
+        shell: bash
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
+          SYNC_MODE: ${{ inputs.mode }}
+          SYNC_COMPETITIONS: ${{ inputs.competitions }}
+        run: |
+          case "$SYNC_MODE" in
+            full|light) ;;
+            *)
+              echo "Invalid sync mode." >&2
+              exit 2
+              ;;
+          esac
+
+          # Keep competition codes as separate arguments without shell expansion.
+          competition_codes=${SYNC_COMPETITIONS//$'\n'/ }
+          read -r -a competitions <<< "$competition_codes"
+          args=()
+          for competition in "${competitions[@]}"; do
+            args+=(--competition "$competition")
+          done
+
+          pnpm "sync:$SYNC_MODE" "${args[@]}"

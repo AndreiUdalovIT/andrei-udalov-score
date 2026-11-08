@@ -1,9 +1,19 @@
 name: Sync football data
-run-name: Manual ${{ inputs.mode }} sync for ${{ inputs.competitions }} (development)
+run-name: >-
+  Manual ${{ inputs.mode }} sync for ${{ inputs.competitions }}
+  (${{ inputs.environment }})
 
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: development
+        type: choice
+        options:
+          - development
+          - production
       mode:
         description: Sync mode
         required: true
@@ -29,7 +39,7 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    environment: development
+    environment: ${{ inputs.environment }}
     timeout-minutes: 45
     env:
       HUSKY: 0

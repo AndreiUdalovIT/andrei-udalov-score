@@ -1,13 +1,20 @@
 import 'server-only';
 
 import { desc, eq } from 'drizzle-orm';
+import { cacheLife, cacheTag } from 'next/cache';
 
 import type { CompetitionCode } from '@/lib/config/competitions';
 
+import { footballCacheTags } from '../cache-tags';
 import { db } from '../db/client';
 import { competitions, teamCompetitions } from '../db/schema';
 
 export async function getCompetition(competitionCode: CompetitionCode) {
+  'use cache';
+
+  cacheLife('hours');
+  cacheTag(footballCacheTags.competition(competitionCode));
+
   try {
     const [competition] = await db
       .select({
@@ -30,6 +37,11 @@ export async function getCompetition(competitionCode: CompetitionCode) {
 
 /** Seasons with stored participants, newest first. */
 export async function getCompetitionSeasons(competitionCode: CompetitionCode) {
+  'use cache';
+
+  cacheLife('hours');
+  cacheTag(footballCacheTags.competition(competitionCode));
+
   try {
     const rows = await db
       .selectDistinct({ season: teamCompetitions.season })

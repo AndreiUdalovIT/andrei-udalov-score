@@ -1,9 +1,11 @@
 import 'server-only';
 
 import { and, asc, eq } from 'drizzle-orm';
+import { cacheLife, cacheTag } from 'next/cache';
 
 import type { CompetitionCode } from '@/lib/config/competitions';
 
+import { footballCacheTags } from '../cache-tags';
 import { db } from '../db/client';
 import { competitions, teamCompetitions, teams } from '../db/schema';
 
@@ -17,6 +19,11 @@ const teamFields = {
 };
 
 export async function getTeam(teamId: number) {
+  'use cache';
+
+  cacheLife('hours');
+  cacheTag(footballCacheTags.teams);
+
   try {
     const [team] = await db
       .select(teamFields)
@@ -35,6 +42,15 @@ export async function getCompetitionTeams(
   competitionCode: CompetitionCode,
   season: number,
 ) {
+  'use cache';
+
+  cacheLife('hours');
+  cacheTag(
+    footballCacheTags.teams,
+    footballCacheTags.competition(competitionCode),
+    footballCacheTags.season(competitionCode, season),
+  );
+
   try {
     const rows = await db
       .select(teamFields)

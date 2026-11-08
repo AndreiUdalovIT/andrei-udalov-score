@@ -80,6 +80,79 @@ pnpm sync:full --competition PL --competition CL
 `full`, `light` и `seed`. Команды и участников сезона загружайте до матчей,
 таблицы и бомбардиров. Параметры каждой операции перечислены в её `--help`.
 
+## GitHub Actions
+
+Workflow `.github/workflows/sync.yml` запускает `full` и `light`.
+Для первого ручного запуска файл должен находиться в `main`.
+[Ручной запуск workflow](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)
+
+В Settings → Environments создайте `development` и `production`.
+В каждом окружении задайте секреты `DATABASE_URL` и `FOOTBALL_DATA_TOKEN`.
+Используйте отдельные ветки Neon. Production-подключение должно соответствовать
+базе сайта на Vercel, а схема каждой базы должна содержать миграции из раздела подготовки.
+[Секреты окружений](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets)
+
+В Settings → Secrets and variables → Actions → Variables задайте repository variables.
+
+- `SYNC_COMPETITIONS` — коды турниров через пробел, например `PL PD BL1 SA FL1 CL ELC`.
+- `SYNC_SCHEDULE_ENABLED` — `false` при подготовке и `true` после успешной ручной проверки production.
+
+### Первый запуск
+
+1. Установите `SYNC_SCHEDULE_ENABLED=false`.
+2. В Actions → Sync football data → Run workflow выберите ветку `main`,
+   окружение `development`, режим `light` и турнир `PL`.
+3. Дождитесь успешного завершения и проверьте новую запись `ok` в журнале dev-базы.
+4. Выполните ручной `full` в окружении `production`. В поле competitions
+   укажите список кодов из `SYNC_COMPETITIONS`.
+5. Проверьте успешное завершение и запись `ok` с режимом `full` и выбранными
+   турнирами в журнале production-базы. После этого установите
+   `SYNC_SCHEDULE_ENABLED=true` и проверьте ближайший плановый запуск.
+
+Ручной запуск использует выбранное окружение и параметры формы.
+Cron использует `production` и значение `SYNC_COMPETITIONS`.
+Общая очередь объединяет оба окружения и режима. Для плановой остановки
+расписания установите `SYNC_SCHEDULE_ENABLED=false` и дождитесь завершения
+работающих запусков.
+
+### Расписание и наблюдение
+
+- `light` — `17 */4 * * *` по UTC, то есть 03:17, 07:17, 11:17, 15:17,
+  19:17 и 23:17 по Москве.
+- `full` — `37 1 * * *` по UTC, то есть ежедневно в 04:37 по Москве.
+
+GitHub допускает задержки и пропуски cron при высокой нагрузке. В публичном
+репозитории расписание автоматически отключается после 60 дней без активности.
+Для восстановления установите флаг расписания в `false`, включите workflow
+в Actions, выполните ручной production-`full` и проверьте журнал. После успешного
+запуска верните флаг в `true` и проверьте ближайший cron.
+[Ограничения schedule](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
+
+Подпишитесь на репозиторий через Watch.
+В личных настройках GitHub → Notifications → System → Actions включите уведомления
+на GitHub или по email и выберите Only notify for failed workflows.
+Уведомления cron получает создатель workflow, а после изменения cron — автор изменения.
+При повторном включении workflow получатель меняется на включившего его пользователя.
+[Настройка уведомлений](https://docs.github.com/en/subscriptions-and-notifications/how-tos/managing-github-actions-notifications),
+[получатели уведомлений](https://docs.github.com/en/actions/concepts/workflows-and-actions/notifications-for-workflow-runs)
+
+Проверяйте Actions и `sync_runs` в соответствующей ветке Neon. При отмене или
+достижении таймаута workflow в 45 минут может остаться запись `running`.
+Порядок её завершения описан ниже в разделе восстановления.
+
+### Лимиты сервисов
+
+Ограничения сверены 8 ноября 2026 года. Для football-data.org Free опубликован
+лимит 10 запросов в минуту. Клиент проекта выдерживает минимум 6 секунд между
+стартами запросов в одном процессе.
+[Политика API](https://docs.football-data.org/general/v4/policies.html)
+
+Для Neon Free опубликованы 100 CU-часов compute и 5 GB исходящего трафика в месяц,
+1 GB Postgres-хранилища и 10 веток на проект. Расход compute учитывает все
+вычислительные узлы проекта, включая dev и production. Перед включением
+расписания сверьте фактический тариф и расход ресурсов в Neon Console.
+[Лимиты Neon](https://neon.com/docs/introduction/plans)
+
 ## Проверка результата
 
 В Neon SQL Editor выберите ту же ветку, на которую указывает `DATABASE_URL`,

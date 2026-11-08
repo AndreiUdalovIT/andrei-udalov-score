@@ -1,9 +1,14 @@
 name: Sync football data
 run-name: >-
-  Manual ${{ inputs.mode }} sync for ${{ inputs.competitions }}
-  (${{ inputs.environment }})
+  ${{ github.event_name == 'schedule' && 'Scheduled production sync' ||
+      format('Manual {0} sync for {1} ({2})',
+             inputs.mode, inputs.competitions, inputs.environment) }}
 
 on:
+  schedule:
+    # UTC. Light every four hours, full daily at a separate time.
+    - cron: '17 */4 * * *'
+    - cron: '37 1 * * *'
   workflow_dispatch:
     inputs:
       environment:
@@ -38,8 +43,12 @@ concurrency:
 
 jobs:
   sync:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          vars.SYNC_SCHEDULE_ENABLED == 'true' }}
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: >-
+      ${{ github.event_name == 'schedule' && 'production' || inputs.environment }}
     timeout-minutes: 45
     env:
       HUSKY: 0
@@ -60,7 +69,21 @@ jobs:
           FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
           SYNC_MODE: ${{ inputs.mode }}
           SYNC_COMPETITIONS: ${{ inputs.competitions }}
+          SYNC_SCHEDULE: ${{ github.event.schedule }}
+          SCHEDULED_COMPETITIONS: ${{ vars.SYNC_COMPETITIONS }}
         run: |
+          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
+            case "$SYNC_SCHEDULE" in
+              '17 */4 * * *') SYNC_MODE=light ;;
+              '37 1 * * *') SYNC_MODE=full ;;
+              *)
+                echo "Unknown sync schedule." >&2
+                exit 2
+                ;;
+            esac
+            SYNC_COMPETITIONS="$SCHEDULED_COMPETITIONS"
+          fi
+
           case "$SYNC_MODE" in
             full|light) ;;
             *)

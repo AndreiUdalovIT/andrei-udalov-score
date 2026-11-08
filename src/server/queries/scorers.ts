@@ -1,9 +1,11 @@
 import 'server-only';
 
 import { and, asc, desc, eq, getTableColumns } from 'drizzle-orm';
+import { cacheLife, cacheTag } from 'next/cache';
 
 import type { CompetitionCode } from '@/lib/config/competitions';
 
+import { footballCacheTags } from '../cache-tags';
 import { db } from '../db/client';
 import { competitions, scorers, teams } from '../db/schema';
 
@@ -11,6 +13,15 @@ export async function getCompetitionScorers(
   competitionCode: CompetitionCode,
   season: number,
 ) {
+  'use cache';
+
+  cacheLife('minutes');
+  cacheTag(
+    footballCacheTags.teams,
+    footballCacheTags.competition(competitionCode),
+    footballCacheTags.season(competitionCode, season),
+  );
+
   try {
     // Season totals also include players who have left the current squad.
     const rows = await db

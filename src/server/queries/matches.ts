@@ -2,9 +2,11 @@ import 'server-only';
 
 import { and, asc, eq, getTableColumns } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
+import { cacheLife, cacheTag } from 'next/cache';
 
 import type { CompetitionCode } from '@/lib/config/competitions';
 
+import { footballCacheTags } from '../cache-tags';
 import { db } from '../db/client';
 import { competitions, matches, teams } from '../db/schema';
 
@@ -31,6 +33,11 @@ function selectMatches() {
 }
 
 export async function getMatch(matchId: number) {
+  'use cache';
+
+  cacheLife('minutes');
+  cacheTag(footballCacheTags.matches, footballCacheTags.teams);
+
   try {
     const [match] = await selectMatches().where(eq(matches.id, matchId)).limit(1);
 
@@ -45,6 +52,15 @@ export async function getCompetitionMatches(
   competitionCode: CompetitionCode,
   season: number,
 ) {
+  'use cache';
+
+  cacheLife('minutes');
+  cacheTag(
+    footballCacheTags.teams,
+    footballCacheTags.competition(competitionCode),
+    footballCacheTags.season(competitionCode, season),
+  );
+
   try {
     const rows = await selectMatches()
       .where(and(eq(competitions.code, competitionCode), eq(matches.season, season)))

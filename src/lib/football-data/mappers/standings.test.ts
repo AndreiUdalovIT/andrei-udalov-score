@@ -16,6 +16,8 @@ describe('standings mapper', () => {
         competitionId: 2021,
         season: 2026,
         teamId: 57,
+        stage: 'REGULAR_SEASON',
+        group: 'Matchday',
         position: 1,
         playedGames: 9,
         won: 8,
@@ -29,6 +31,8 @@ describe('standings mapper', () => {
         competitionId: 2021,
         season: 2026,
         teamId: 71,
+        stage: 'REGULAR_SEASON',
+        group: 'Matchday',
         position: 20,
         playedGames: 9,
         won: 1,
@@ -93,19 +97,48 @@ describe('standings mapper', () => {
     expect(rows.map((row) => row.points)).toEqual([-3, -3]);
   });
 
-  it('maps all TOTAL groups when their team IDs are distinct', () => {
+  it('preserves historical stage, group and positions without renumbering', () => {
     const rows = mapStandings({
-      ...league,
-      standings: league.standings.flatMap((standing) =>
+      ...championsLeague,
+      season: {
+        ...championsLeague.season,
+        startDate: '2023-09-19',
+        endDate: '2024-06-01',
+      },
+      standings: championsLeague.standings.flatMap((standing) =>
         standing.table.map((row, index) => ({
           ...standing,
+          stage: 'GROUP_STAGE',
           group: `GROUP_${index + 1}`,
-          table: [row],
+          table: [{ ...row, position: 1 }],
         })),
       ),
     });
 
-    expect(rows.map((row) => row.teamId)).toEqual([57, 71]);
+    expect(
+      rows.map(({ season, teamId, stage, group, position }) => ({
+        season,
+        teamId,
+        stage,
+        group,
+        position,
+      })),
+    ).toEqual([
+      {
+        season: 2023,
+        teamId: 524,
+        stage: 'GROUP_STAGE',
+        group: 'GROUP_1',
+        position: 1,
+      },
+      {
+        season: 2023,
+        teamId: 7509,
+        stage: 'GROUP_STAGE',
+        group: 'GROUP_2',
+        position: 1,
+      },
+    ]);
   });
 
   it('rejects team IDs repeated across TOTAL tables', () => {

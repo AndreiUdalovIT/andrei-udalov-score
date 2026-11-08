@@ -31,6 +31,8 @@ export function mapStandings({
         competitionId: competition.id,
         season: seasonYear,
         teamId: row.team.id,
+        stage: standing.stage,
+        group: standing.group,
         position: row.position,
         playedGames: row.playedGames,
         won: row.won,

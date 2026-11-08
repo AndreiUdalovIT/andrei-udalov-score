@@ -88,9 +88,8 @@ export const matches = pgTable(
 );
 
 /**
- * The overall table only. Home and away stats are computed from matches,
- * so the app does not depend on separate HOME/AWAY tables from the API.
- * The key also serves «the table of a competition».
+ * TOTAL standings retain the stage and group of each table.
+ * Home and away stats are computed from matches.
  */
 export const standings = pgTable(
   'standings',
@@ -110,6 +109,9 @@ export const standings = pgTable(
     points: integer().notNull(),
     goalsFor: integer().notNull(),
     goalsAgainst: integer().notNull(),
+    // Legacy snapshots have no context until their next standings sync.
+    stage: text(),
+    group: text(),
   },
   (t) => [primaryKey({ columns: [t.competitionId, t.season, t.teamId] })],
 );

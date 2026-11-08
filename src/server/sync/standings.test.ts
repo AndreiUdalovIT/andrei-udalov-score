@@ -81,7 +81,8 @@ describe('competition standings sync', () => {
     expect(queries[1]?.sql).toContain('insert into "standings"');
     expect(queries[1]?.params.slice(0, 3)).toEqual([2021, 2026, 57]);
     expect(queries[1]?.params[8]).toBe(-3);
-    expect(queries[1]?.params[13]).toBe(71);
+    expect(queries[1]?.params.slice(11, 13)).toEqual(['REGULAR_SEASON', 'Matchday']);
+    expect(queries[1]?.params[15]).toBe(71);
   });
 
   it('replaces only the requested historical season', async () => {

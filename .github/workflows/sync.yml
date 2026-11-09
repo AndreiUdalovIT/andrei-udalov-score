@@ -128,14 +128,20 @@ jobs:
         env:
           REVALIDATE_URL: ${{ vars.REVALIDATE_URL }}
           REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
           SYNC_MODE: ${{ steps.configuration.outputs.mode }}
           SYNC_COMPETITIONS: ${{ steps.configuration.outputs.competitions }}
         run: |
+          bypass_headers=()
+          if [[ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]]; then
+            bypass_headers+=(--header "x-vercel-protection-bypass: $VERCEL_AUTOMATION_BYPASS_SECRET")
+          fi
           payload=$(node -e 'process.stdout.write(JSON.stringify({mode: process.env.SYNC_MODE, competitions: process.env.SYNC_COMPETITIONS.split(" ")}))')
           if ! status=$(curl --silent --show-error --fail \
             --retry 2 --retry-delay 3 --retry-max-time 60 \
             --connect-timeout 10 --max-time 20 --proto '=https' \
             --header "Authorization: Bearer $REVALIDATE_SECRET" \
+            "${bypass_headers[@]}" \
             --header 'Content-Type: application/json' \
             --data-binary "$payload" --output /dev/null \
             --write-out '%{http_code}' "$REVALIDATE_URL"); then

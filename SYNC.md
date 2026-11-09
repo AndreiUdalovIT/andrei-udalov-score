@@ -115,6 +115,16 @@ Deployment по этому адресу должен читать ту же ве
 node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
+Если Preview защищён Vercel Authentication, в настройках проекта Vercel откройте
+Settings → Deployment Protection → Protection Bypass for Automation и создайте
+секрет для GitHub Actions. Сохраните его в GitHub Environment `development`
+под именем `VERCEL_AUTOMATION_BYPASS_SECRET`.
+
+Workflow передаёт этот секрет заголовком `x-vercel-protection-bypass`.
+Приложение продолжает отдельно проверять `REVALIDATE_SECRET`.
+Для deployment без такой защиты bypass-секрет необязателен.
+[Protection Bypass for Automation](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation)
+
 После настройки переменных нужен новый deployment. Workflow проверяет URL,
 наличие секрета, режим и известные коды турниров до начала записи в БД.
 

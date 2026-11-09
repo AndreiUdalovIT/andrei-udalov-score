@@ -39,7 +39,10 @@ export async function syncFullCompetitions(
     });
     const seasonOptions = { season: teamsResult.season, signal, requestCounter };
     const matchesResult = await syncCompetitionMatches(code, seasonOptions);
-    const standingsResult = await syncCompetitionStandings(code, seasonOptions);
+    const standingsResult = await syncCompetitionStandings(code, {
+      ...seasonOptions,
+      captureOfficial: true,
+    });
     const scorersResult = await syncCompetitionScorers(code, seasonOptions);
 
     competitions.push({

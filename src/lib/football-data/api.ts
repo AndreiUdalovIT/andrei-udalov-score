@@ -66,7 +66,7 @@ function normalizeCompetitionCode(competitionCode: string) {
   return code;
 }
 
-function validateSeason(season?: number) {
+export function validateSeason(season?: number) {
   if (
     season !== undefined &&
     (!Number.isInteger(season) || season < 1000 || season > 9999)

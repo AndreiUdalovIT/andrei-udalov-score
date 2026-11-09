@@ -111,6 +111,8 @@ describe('light competition sync', () => {
     expect(mocks.syncCompetitionTeams).toHaveBeenNthCalledWith(1, 'PL', options);
     expect(mocks.syncCompetitionTeams).toHaveBeenNthCalledWith(2, 'CL', options);
     expect(mocks.syncCompetitionMatches).toHaveBeenCalledTimes(2);
+    expect(mocks.syncCompetitionStandings).toHaveBeenCalledTimes(2);
+    expect(mocks.syncCompetitionScorers).toHaveBeenCalledTimes(2);
     for (const [code, season] of [
       ['PL', 2026],
       ['CL', 2025],
@@ -121,13 +123,15 @@ describe('light competition sync', () => {
         dateFrom: '2026-12-24',
         dateTo: '2027-01-07',
       });
-      for (const syncDataset of [
-        mocks.syncCompetitionStandings,
-        mocks.syncCompetitionScorers,
-      ]) {
-        expect(syncDataset).toHaveBeenCalledTimes(2);
-        expect(syncDataset).toHaveBeenCalledWith(code, { season, ...options });
-      }
+      expect(mocks.syncCompetitionStandings).toHaveBeenCalledWith(code, {
+        season,
+        ...options,
+        captureOfficial: true,
+      });
+      expect(mocks.syncCompetitionScorers).toHaveBeenCalledWith(code, {
+        season,
+        ...options,
+      });
     }
   });
 

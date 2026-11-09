@@ -46,7 +46,10 @@ export async function syncLightCompetitions(
       dateFrom,
       dateTo,
     });
-    const standingsResult = await syncCompetitionStandings(code, seasonOptions);
+    const standingsResult = await syncCompetitionStandings(code, {
+      ...seasonOptions,
+      captureOfficial: true,
+    });
     const scorersResult = await syncCompetitionScorers(code, seasonOptions);
 
     competitions.push({

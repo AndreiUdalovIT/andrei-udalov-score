@@ -1,9 +1,23 @@
 import 'server-only';
 
-import { and, arrayContains, desc, eq, inArray, isNotNull } from 'drizzle-orm';
+import {
+  and,
+  arrayContains,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  max,
+  sql,
+} from 'drizzle-orm';
+import { cacheLife, cacheTag } from 'next/cache';
 
-import type { CompetitionCode } from '@/lib/config/competitions';
+import {
+  siteCompetitionCodes,
+  type CompetitionCode,
+} from '@/lib/config/competitions';
 
+import { footballCacheTags } from '../cache-tags';
 import { db } from '../db/client';
 import { syncRuns, type SyncMode } from '../db/schema';
 
@@ -51,5 +65,50 @@ export async function getCompetitionSyncStatus(
   } catch {
     // Driver errors may contain connection details or query parameters.
     throw new Error('competition sync status could not be loaded');
+  }
+}
+
+/**
+ * Run-level timestamp for all site competitions, based on the oldest
+ * per-competition successful finish. Null means incomplete journal coverage.
+ * It does not describe a specific season or squad snapshot.
+ */
+export async function getSiteLastSyncedAt() {
+  'use cache';
+
+  cacheLife('minutes');
+  cacheTag(...siteCompetitionCodes.map(footballCacheTags.competition));
+
+  try {
+    const rows = await db
+      .select({ finishedAt: max(syncRuns.finishedAt) })
+      .from(
+        sql`unnest(${sql.param(siteCompetitionCodes, syncRuns.competitionCodes)}::text[]) as requested(code)`,
+      )
+      .leftJoin(
+        syncRuns,
+        and(
+          arrayContains(syncRuns.competitionCodes, sql`array[requested.code]`),
+          eq(syncRuns.status, 'ok'),
+          inArray(syncRuns.mode, ['light', 'full', 'seed']),
+          isNotNull(syncRuns.finishedAt),
+        ),
+      )
+      .groupBy(sql`requested.code`);
+
+    if (rows.length !== siteCompetitionCodes.length) return null;
+
+    let lastSyncedAt: Date | null = null;
+    for (const row of rows) {
+      if (!row.finishedAt) return null;
+      if (!lastSyncedAt || row.finishedAt < lastSyncedAt) {
+        lastSyncedAt = row.finishedAt;
+      }
+    }
+
+    return lastSyncedAt;
+  } catch {
+    // Driver errors may contain connection details or query parameters.
+    throw new Error('site sync time could not be loaded');
   }
 }

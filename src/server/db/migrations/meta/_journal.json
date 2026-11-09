@@ -29,6 +29,13 @@
       "when": 1794176010000,
       "tag": "0003_standings_context",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794261082700,
+      "tag": "0004_standings_snapshots",
+      "breakpoints": true
     }
   ]
 }

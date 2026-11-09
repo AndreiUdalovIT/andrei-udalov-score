@@ -40,6 +40,11 @@ type CompetitionMatchesOptions = CompetitionOptions & {
   dateTo?: string;
 };
 
+type CompetitionStandingsOptions = CompetitionOptions & {
+  /** Round-based reconstruction; deducted points are excluded. */
+  matchday?: number;
+};
+
 type CompetitionScorersOptions = CompetitionOptions & {
   limit?: number;
 };
@@ -215,16 +220,23 @@ export function createFootballDataApi(options: ClientOptions = {}) {
 
     async getCompetitionStandings(
       competitionCode: string,
-      { season, signal }: CompetitionOptions = {},
+      { season, matchday, signal }: CompetitionStandingsOptions = {},
     ): Promise<ApiStandingsResponse> {
       const code = normalizeCompetitionCode(competitionCode);
       validateSeason(season);
+      if (
+        matchday !== undefined &&
+        (!Number.isSafeInteger(matchday) || matchday < 1)
+      ) {
+        throw new RangeError('matchday must be a positive safe integer');
+      }
+
+      const params: Record<string, string | number> = {};
+      if (season !== undefined) params.season = season;
+      if (matchday !== undefined) params.matchday = matchday;
 
       const resource = `competitions/${code}/standings`;
-      const data = await client.get(resource, {
-        params: season === undefined ? undefined : { season },
-        signal,
-      });
+      const data = await client.get(resource, { params, signal });
       const schema = standingsResponseSchema
         .refine((response) => response.competition.code === code, {
           path: ['competition', 'code'],

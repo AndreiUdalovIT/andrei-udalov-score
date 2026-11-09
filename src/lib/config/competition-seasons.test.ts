@@ -91,6 +91,31 @@ describe('competition season configuration', () => {
     ).toEqual([7, 8, 7, 6]);
   });
 
+  it('keeps Serie A European places seasonal and relegation play-offs conditional', () => {
+    const seasons = [2023, 2024, 2025, 2026].map((season) =>
+      getCompetitionSeasonConfig('SA', season),
+    );
+
+    expect(
+      seasons.map((config) => config?.zones.find(({ zone }) => zone === 'ucl')?.to),
+    ).toEqual([5, 4, 4, 4]);
+    expect(
+      seasons.map(
+        (config) => config?.zones.find(({ zone }) => zone === 'uecl')?.from,
+      ),
+    ).toEqual([8, 6, 7, 6]);
+    expect(
+      getCompetitionSeasonConfig('SA', 2026)?.zones.find(
+        ({ zone }) => zone === 'releg',
+      ),
+    ).toMatchObject({ from: 18, to: 20 });
+    expect(
+      getCompetitionSeasonConfig('SA', 2026)?.zones.find(
+        ({ zone }) => zone === 'playoff',
+      ),
+    ).toBeUndefined();
+  });
+
   it('leaves unconfigured seasons unknown', () => {
     expect(getCompetitionSeasonConfig('CL', 2022)).toBeUndefined();
     expect(getCompetitionSeasonConfig('CL', 2027)).toBeUndefined();

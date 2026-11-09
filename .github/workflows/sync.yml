@@ -1,8 +1,9 @@
 name: Sync football data
 run-name: >-
   ${{ github.event_name == 'schedule' && 'Scheduled production sync' ||
-      format('Manual {0} sync for {1} ({2})',
-             inputs.mode, inputs.competitions, inputs.environment) }}
+      format('Manual {0} for {1} ({2})',
+             inputs.revalidate_only && 'cache revalidation' || format('{0} sync', inputs.mode),
+             inputs.competitions, inputs.environment) }}
 
 on:
   schedule:
@@ -33,6 +34,12 @@ on:
         default: PL
         type: string
 
+      revalidate_only:
+        description: Retry cache invalidation without syncing data
+        required: false
+        default: false
+        type: boolean
+
 permissions:
   contents: read
 
@@ -62,42 +69,81 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Sync selected competitions
+      - name: Prepare sync and revalidation
+        id: configuration
         shell: bash
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
           SYNC_MODE: ${{ inputs.mode }}
           SYNC_COMPETITIONS: ${{ inputs.competitions }}
           SYNC_SCHEDULE: ${{ github.event.schedule }}
           SCHEDULED_COMPETITIONS: ${{ vars.SYNC_COMPETITIONS }}
+          REVALIDATE_URL: ${{ vars.REVALIDATE_URL }}
+          REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
-            case "$SYNC_SCHEDULE" in
-              '17 */4 * * *') SYNC_MODE=light ;;
-              '37 1 * * *') SYNC_MODE=full ;;
-              *)
-                echo "Unknown sync schedule." >&2
-                exit 2
-                ;;
-            esac
-            SYNC_COMPETITIONS="$SCHEDULED_COMPETITIONS"
-          fi
+          node --import tsx <<'NODE'
+          const { appendFileSync } = require('node:fs');
+          const { competitionConfig } = require('./src/lib/config/competitions.ts');
+          const env = process.env;
+          const fail = (message) => { console.error(message); process.exit(2); };
+          const scheduled = env.GITHUB_EVENT_NAME === 'schedule';
+          const mode = scheduled
+            ? { '17 */4 * * *': 'light', '37 1 * * *': 'full' }[env.SYNC_SCHEDULE]
+            : env.SYNC_MODE;
+          const rawCodes = scheduled ? env.SCHEDULED_COMPETITIONS : env.SYNC_COMPETITIONS;
+          const codes = [...new Set((rawCodes ?? '').trim().toUpperCase().split(/\s+/).filter(Boolean))].sort();
+          if (!['light', 'full'].includes(mode) || !codes.length ||
+              codes.some((code) => !Object.hasOwn(competitionConfig, code))) {
+            fail('Invalid sync mode or competition codes.');
+          }
+          let url;
+          try { url = new URL(env.REVALIDATE_URL); }
+          catch { fail('Configure REVALIDATE_URL and REVALIDATE_SECRET for this environment.'); }
+          if (!env.REVALIDATE_SECRET || url.protocol !== 'https:' ||
+              url.username || url.password || url.search || url.hash ||
+              url.pathname !== '/api/revalidate') {
+            fail('Configure REVALIDATE_URL and REVALIDATE_SECRET for this environment.');
+          }
+          appendFileSync(env.GITHUB_OUTPUT, `mode=${mode}\ncompetitions=${codes.join(' ')}\n`);
+          NODE
 
-          case "$SYNC_MODE" in
-            full|light) ;;
-            *)
-              echo "Invalid sync mode." >&2
-              exit 2
-              ;;
-          esac
-
-          # Keep competition codes as separate arguments without shell expansion.
-          competition_codes=${SYNC_COMPETITIONS//$'\n'/ }
-          read -r -a competitions <<< "$competition_codes"
+      - name: Sync selected competitions
+        if: ${{ github.event_name == 'schedule' || !inputs.revalidate_only }}
+        shell: bash
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
+          SYNC_MODE: ${{ steps.configuration.outputs.mode }}
+          SYNC_COMPETITIONS: ${{ steps.configuration.outputs.competitions }}
+        run: |
+          read -r -a competitions <<< "$SYNC_COMPETITIONS"
           args=()
           for competition in "${competitions[@]}"; do
             args+=(--competition "$competition")
           done
-
           pnpm "sync:$SYNC_MODE" "${args[@]}"
+
+      - name: Revalidate application cache
+        timeout-minutes: 2
+        shell: bash
+        env:
+          REVALIDATE_URL: ${{ vars.REVALIDATE_URL }}
+          REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
+          SYNC_MODE: ${{ steps.configuration.outputs.mode }}
+          SYNC_COMPETITIONS: ${{ steps.configuration.outputs.competitions }}
+        run: |
+          payload=$(node -e 'process.stdout.write(JSON.stringify({mode: process.env.SYNC_MODE, competitions: process.env.SYNC_COMPETITIONS.split(" ")}))')
+          if ! status=$(curl --silent --show-error --fail \
+            --retry 2 --retry-delay 3 --retry-max-time 60 \
+            --connect-timeout 10 --max-time 20 --proto '=https' \
+            --header "Authorization: Bearer $REVALIDATE_SECRET" \
+            --header 'Content-Type: application/json' \
+            --data-binary "$payload" --output /dev/null \
+            --write-out '%{http_code}' "$REVALIDATE_URL"); then
+            echo 'Cache revalidation failed. Previously synced data remains saved.' >&2
+            exit 1
+          fi
+          if [[ "$status" != 200 ]]; then
+            echo "Cache revalidation returned HTTP $status. Check REVALIDATE_URL." >&2
+            exit 1
+          fi
+          echo 'Application cache revalidated.'

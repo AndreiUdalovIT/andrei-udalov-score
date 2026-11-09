@@ -6,11 +6,13 @@ describe('competition season configuration', () => {
   it('switches the Champions League main-stage format in 2024/25', () => {
     expect(getCompetitionSeasonConfig('CL', 2023)).toMatchObject({
       format: 'groups',
+      mainStage: 'GROUP_STAGE',
       teamCount: 32,
       matchdays: 6,
     });
     expect(getCompetitionSeasonConfig('CL', 2024)).toMatchObject({
       format: 'league-phase',
+      mainStage: 'LEAGUE_STAGE',
       teamCount: 36,
       matchdays: 8,
     });

@@ -11,12 +11,6 @@ import { footballCacheTags } from '../cache-tags';
 import { db } from '../db/client';
 import { competitions, matches, teamCompetitions, teams } from '../db/schema';
 
-const stageByFormat = {
-  'round-robin': 'REGULAR_SEASON',
-  groups: 'GROUP_STAGE',
-  'league-phase': 'LEAGUE_STAGE',
-} as const;
-
 /** Main-stage statistics; null means the season format is not configured. */
 export async function getCompetitionVenueStats(
   competitionCode: CompetitionCode,
@@ -63,7 +57,7 @@ export async function getCompetitionVenueStats(
           and(
             eq(competitions.code, competitionCode),
             eq(matches.season, season),
-            eq(matches.stage, stageByFormat[config.format]),
+            eq(matches.stage, config.mainStage),
           ),
         ),
     ]);

@@ -116,6 +116,36 @@ describe('competition season configuration', () => {
     ).toBeUndefined();
   });
 
+  it('keeps Ligue 1 qualifying places and ranking rules season-specific', () => {
+    const seasons = [2023, 2024, 2025, 2026].map((season) =>
+      getCompetitionSeasonConfig('FL1', season),
+    );
+
+    for (const config of seasons) {
+      expect(config?.zones.filter(({ zone }) => zone === 'ucl')).toMatchObject([
+        { from: 1, to: 3 },
+        { from: 4, to: 4 },
+      ]);
+      expect(
+        config?.zones.filter(({ zone }) => zone === 'playoff' || zone === 'releg'),
+      ).toMatchObject([
+        { from: 16, to: 16, zone: 'playoff' },
+        { from: 17, to: 18, zone: 'releg' },
+      ]);
+    }
+    expect(
+      seasons.map((config) => config?.zones.find(({ zone }) => zone === 'uel')?.to),
+    ).toEqual([6, 6, 6, 5]);
+    expect(
+      seasons.map(
+        (config) => config?.zones.find(({ zone }) => zone === 'uecl')?.from,
+      ),
+    ).toEqual([7, 7, 7, 6]);
+    expect(seasons[0]?.rankingNote).toEqual(seasons[1]?.rankingNote);
+    expect(seasons[2]?.rankingNote).not.toEqual(seasons[1]?.rankingNote);
+    expect(seasons[3]?.rankingNote).toEqual(seasons[2]?.rankingNote);
+  });
+
   it('leaves unconfigured seasons unknown', () => {
     expect(getCompetitionSeasonConfig('CL', 2022)).toBeUndefined();
     expect(getCompetitionSeasonConfig('CL', 2027)).toBeUndefined();

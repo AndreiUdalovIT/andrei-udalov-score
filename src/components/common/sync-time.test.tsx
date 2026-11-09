@@ -24,6 +24,9 @@ it('updates the age and stale state, then releases its timer on unmount', () => 
   act(() => vi.advanceTimersByTime(60_000));
 
   expect(screen.getByText('8 ч назад')).toHaveAttribute('data-stale', 'true');
+  expect(screen.getByText('8 ч назад')).toHaveTextContent(
+    'Данные могут быть устаревшими.',
+  );
   unmount();
   expect(vi.getTimerCount()).toBe(0);
 });

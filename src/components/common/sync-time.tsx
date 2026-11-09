@@ -51,6 +51,9 @@ export function SyncTime({
       className={className}
     >
       {age.label}
+      {age.isStale && (
+        <span className="sr-only">. Данные могут быть устаревшими.</span>
+      )}
     </time>
   );
 }

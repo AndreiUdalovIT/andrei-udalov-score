@@ -1,8 +1,10 @@
 import { ArrowUpRight } from 'lucide-react';
 import Link from 'next/link';
-import type { ReactNode } from 'react';
+import { Suspense, type ReactNode } from 'react';
 
 import { siteLinks } from '@/lib/config/site';
+
+import { SiteSyncTimestamp } from './site-sync';
 
 const LINK =
   'inline-flex min-h-6 items-center gap-1 font-medium text-foreground hover:text-primary';
@@ -29,7 +31,7 @@ function ExternalLink({
 }
 
 /** One row from 1024px, two compact rows on mobile; same markup for both. */
-export function Footer({ syncLabel = null }: { syncLabel?: string | null }) {
+export function Footer() {
   return (
     <footer aria-label="О проекте" className="border-t bg-background">
       <div
@@ -54,8 +56,9 @@ export function Footer({ syncLabel = null }: { syncLabel?: string | null }) {
               football-data.org
             </ExternalLink>
           </span>
-          {/* The last successful sync arrives with the data in stage 1. */}
-          {syncLabel && <span>Обновлено {syncLabel}</span>}
+          <Suspense fallback={null}>
+            <SiteSyncTimestamp />
+          </Suspense>
           <Link href={siteLinks.methodology} className={LINK}>
             Методология
           </Link>

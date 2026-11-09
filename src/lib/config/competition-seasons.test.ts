@@ -73,6 +73,24 @@ describe('competition season configuration', () => {
     ]);
   });
 
+  it('keeps La Liga European places specific to each season', () => {
+    const seasons = [2023, 2024, 2025, 2026].map((season) =>
+      getCompetitionSeasonConfig('PD', season),
+    );
+
+    expect(
+      seasons.map((config) => config?.zones.find(({ zone }) => zone === 'ucl')?.to),
+    ).toEqual([4, 5, 5, 4]);
+    expect(
+      seasons.map((config) => config?.zones.find(({ zone }) => zone === 'uel')?.to),
+    ).toEqual([6, 7, 6, 5]);
+    expect(
+      seasons.map(
+        (config) => config?.zones.find(({ zone }) => zone === 'uecl')?.from,
+      ),
+    ).toEqual([7, 8, 7, 6]);
+  });
+
   it('leaves unconfigured seasons unknown', () => {
     expect(getCompetitionSeasonConfig('CL', 2022)).toBeUndefined();
     expect(getCompetitionSeasonConfig('CL', 2027)).toBeUndefined();

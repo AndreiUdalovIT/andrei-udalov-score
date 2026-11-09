@@ -19,6 +19,7 @@ export type CompetitionSeasonConfig = {
     readonly zone: Zone;
     readonly label: string;
   }[];
+  readonly qualificationNote: string | null;
   readonly rankingNote: string | null;
   readonly tabs: readonly {
     readonly value: CompetitionTab;
@@ -31,6 +32,7 @@ const domesticFormat = {
   mainStage: 'REGULAR_SEASON',
   mainStageLabel: 'Чемпионат',
   zones: [],
+  qualificationNote: null,
   rankingNote: null,
   tabs: [
     { value: 'table', label: 'Таблица' },
@@ -42,7 +44,16 @@ const domesticFormat = {
 } as const;
 
 const domesticSeasons = {
-  PL: { ...domesticFormat, teamCount: 20, matchdays: 38 },
+  // Premier League Handbook, rules C.4–C.7 and C.17.
+  PL: {
+    ...domesticFormat,
+    teamCount: 20,
+    matchdays: 38,
+    rankingNote:
+      'При равенстве очков сравниваются разница мячей и забитые мячи. При полном равенстве команды делят место. ' +
+      'Если по итогам сезона требуется определить чемпиона, вылет или выход в другие турниры, далее учитываются очки в личных встречах и выездные голы в них. ' +
+      'Если равенство сохраняется у двух команд, проводится дополнительный матч на нейтральном поле.',
+  },
   PD: { ...domesticFormat, teamCount: 20, matchdays: 38 },
   BL1: { ...domesticFormat, teamCount: 18, matchdays: 34 },
   SA: { ...domesticFormat, teamCount: 20, matchdays: 38 },
@@ -70,6 +81,7 @@ const championsLeagueGroups = {
     { from: 3, to: 3, zone: 'uel', label: 'Стыковые матчи Лиги Европы' },
     { from: 4, to: 4, zone: 'releg', label: 'Выбывание' },
   ],
+  qualificationNote: null,
   rankingNote:
     'В итоговой таблице при равенстве очков сначала сравниваются очки, разница мячей и забитые мячи в личных встречах. ' +
     'Для оставшихся равных команд эти критерии применяются повторно. ' +
@@ -89,6 +101,7 @@ const championsLeaguePhase = {
     { from: 9, to: 24, zone: 'uel', label: 'Стыковые матчи' },
     { from: 25, to: 36, zone: 'releg', label: 'Выбывание' },
   ],
+  qualificationNote: null,
   rankingNote:
     'При равенстве очков сравниваются разница мячей, забитые мячи, голы на выезде, победы и выездные победы. ' +
     'До завершения этапа полное равенство по этим критериям даёт одинаковое место. ' +
@@ -100,10 +113,68 @@ const championsLeaguePhase = {
 const competitionSeasons: Readonly<
   Record<number, Readonly<Record<CompetitionCode, CompetitionSeasonConfig>>>
 > = {
-  2023: { ...domesticSeasons, CL: championsLeagueGroups },
-  2024: { ...domesticSeasons, CL: championsLeaguePhase },
-  2025: { ...domesticSeasons, CL: championsLeaguePhase },
-  2026: { ...domesticSeasons, CL: championsLeaguePhase },
+  2023: {
+    ...domesticSeasons,
+    PL: {
+      ...domesticSeasons.PL,
+      zones: [
+        { from: 1, to: 4, zone: 'ucl', label: 'Лига чемпионов' },
+        { from: 5, to: 5, zone: 'uel', label: 'Лига Европы' },
+        { from: 6, to: 6, zone: 'uecl', label: 'Лига конференций' },
+        { from: 18, to: 20, zone: 'releg', label: 'Вылет в Чемпионшип' },
+      ],
+      qualificationNote:
+        'Показаны места, давшие путёвки через итоговую таблицу. ' +
+        '«Манчестер Юнайтед» также получил место в Лиге Европы как победитель Кубка Англии.',
+    },
+    CL: championsLeagueGroups,
+  },
+  2024: {
+    ...domesticSeasons,
+    PL: {
+      ...domesticSeasons.PL,
+      zones: [
+        { from: 1, to: 5, zone: 'ucl', label: 'Лига чемпионов' },
+        { from: 6, to: 7, zone: 'uel', label: 'Лига Европы' },
+        { from: 18, to: 20, zone: 'releg', label: 'Вылет в Чемпионшип' },
+      ],
+      qualificationNote:
+        'Пятое место ЛЧ получено по сезонному рейтингу ассоциаций УЕФА. «Ноттингем Форест» допущен в Лигу Европы после решения по «Кристал Пэлас». ' +
+        '«Тоттенхэм» получил место в ЛЧ как победитель Лиги Европы, «Кристал Пэлас» — место в Лиге конференций.',
+    },
+    CL: championsLeaguePhase,
+  },
+  2025: {
+    ...domesticSeasons,
+    PL: {
+      ...domesticSeasons.PL,
+      zones: [
+        { from: 1, to: 5, zone: 'ucl', label: 'Лига чемпионов' },
+        { from: 6, to: 7, zone: 'uel', label: 'Лига Европы' },
+        { from: 8, to: 8, zone: 'uecl', label: 'Лига конференций' },
+        { from: 18, to: 20, zone: 'releg', label: 'Вылет в Чемпионшип' },
+      ],
+      qualificationNote:
+        'Пятое место ЛЧ получено по сезонному рейтингу ассоциаций УЕФА. Кубковые путёвки перераспределены по итоговой таблице. ' +
+        '«Кристал Пэлас» также получил место в Лиге Европы как победитель Лиги конференций.',
+    },
+    CL: championsLeaguePhase,
+  },
+  2026: {
+    ...domesticSeasons,
+    PL: {
+      ...domesticSeasons.PL,
+      zones: [
+        { from: 1, to: 4, zone: 'ucl', label: 'Лига чемпионов' },
+        { from: 5, to: 5, zone: 'uel', label: 'Лига Европы' },
+        { from: 18, to: 20, zone: 'releg', label: 'Вылет в Чемпионшип' },
+      ],
+      qualificationNote:
+        'Показана базовая квота по таблице. Дополнительное место ЛЧ зависит от сезонного рейтинга ассоциаций УЕФА. ' +
+        'Победители Кубка Англии и Кубка лиги получают места в ЛЕ и ЛК, возможны перераспределения путёвок. Победы в еврокубках также влияют на распределение.',
+    },
+    CL: championsLeaguePhase,
+  },
 };
 
 export function getCompetitionSeasonConfig(

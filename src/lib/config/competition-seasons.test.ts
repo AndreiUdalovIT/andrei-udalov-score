@@ -30,6 +30,26 @@ describe('competition season configuration', () => {
     }
   });
 
+  it('keeps Premier League European places specific to each season', () => {
+    const seasons = [2023, 2024, 2025, 2026].map((season) =>
+      getCompetitionSeasonConfig('PL', season),
+    );
+
+    expect(
+      seasons.map((config) => config?.zones.find(({ zone }) => zone === 'ucl')?.to),
+    ).toEqual([4, 5, 5, 4]);
+    expect(
+      getCompetitionSeasonConfig('PL', 2024)?.zones.find(
+        ({ zone }) => zone === 'uel',
+      )?.to,
+    ).toBe(7);
+    expect(
+      getCompetitionSeasonConfig('PL', 2026)?.zones.find(
+        ({ zone }) => zone === 'uecl',
+      ),
+    ).toBeUndefined();
+  });
+
   it('leaves unconfigured seasons unknown', () => {
     expect(getCompetitionSeasonConfig('CL', 2022)).toBeUndefined();
     expect(getCompetitionSeasonConfig('CL', 2027)).toBeUndefined();

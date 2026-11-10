@@ -11,6 +11,8 @@ import { standings, standingsSnapshots } from '../db/schema';
 
 type StandingsSyncOptions = {
   season?: number;
+  /** Reconstructed history for one round, requiring an explicit season. */
+  matchday?: number;
   captureOfficial?: boolean;
   signal?: AbortSignal;
   requestCounter?: ClientOptions['requestCounter'];
@@ -21,15 +23,22 @@ export async function syncCompetitionStandings(
   competitionCode: string,
   {
     season,
+    matchday,
     captureOfficial = false,
     signal,
     requestCounter,
   }: StandingsSyncOptions = {},
 ) {
   validateSeason(season);
+  if (matchday !== undefined && (season === undefined || captureOfficial)) {
+    throw new RangeError(
+      'matchday requires season and cannot capture official standings',
+    );
+  }
   const api = createFootballDataApi({ requestCounter });
   const response = await api.getCompetitionStandings(competitionCode, {
     season: captureOfficial ? undefined : season,
+    matchday,
     signal,
   });
   const capturedAt = new Date();
@@ -42,6 +51,9 @@ export async function syncCompetitionStandings(
     throw new Error('competition season changed during standings sync');
   }
   const rows = mapStandings(response);
+  if (matchday !== undefined && rows.length === 0) {
+    throw new Error('standings history response has no TOTAL rows');
+  }
   const competitionId = response.competition.id;
 
   try {
@@ -54,32 +66,32 @@ export async function syncCompetitionStandings(
         ),
       );
     const insertRows = rows.length === 0 ? [] : [db.insert(standings).values(rows)];
-    const captures = captureOfficial
-      ? [
-          db.insert(standingsSnapshots).values({
-            competitionId,
-            season: seasonYear,
-            source: 'official',
-            matchday: response.season.currentMatchday,
-            capturedAt,
-            rows: rows.map((row) => ({
-              teamId: row.teamId,
-              stage: row.stage,
-              group: row.group,
-              position: row.position,
-              playedGames: row.playedGames,
-              won: row.won,
-              draw: row.draw,
-              lost: row.lost,
-              points: row.points,
-              goalsFor: row.goalsFor,
-              goalsAgainst: row.goalsAgainst,
-            })),
-          }),
-        ]
-      : [];
-    // Keep the replacement and any official capture in one transaction.
-    await db.batch([removePrevious, ...insertRows, ...captures]);
+    const capture = db.insert(standingsSnapshots).values({
+      competitionId,
+      season: seasonYear,
+      source: matchday === undefined ? 'official' : 'reconstructed',
+      matchday: matchday ?? response.season.currentMatchday,
+      capturedAt,
+      rows: rows.map((row) => ({
+        teamId: row.teamId,
+        stage: row.stage,
+        group: row.group,
+        position: row.position,
+        playedGames: row.playedGames,
+        won: row.won,
+        draw: row.draw,
+        lost: row.lost,
+        points: row.points,
+        goalsFor: row.goalsFor,
+        goalsAgainst: row.goalsAgainst,
+      })),
+    });
+    // Round history is appended independently of the current table.
+    await db.batch(
+      matchday === undefined
+        ? [removePrevious, ...insertRows, ...(captureOfficial ? [capture] : [])]
+        : [capture],
+    );
   } catch {
     // Driver errors may contain connection details or query parameters.
     throw new Error('competition standings could not be saved');

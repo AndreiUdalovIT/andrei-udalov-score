@@ -8,21 +8,36 @@ import { competitionOptions, parseCompetitionOptions } from './command-options';
 
 const USAGE =
   'Usage: pnpm sync:standings --competition CODE [--season YYYY]\n' +
+  '       pnpm sync:standings --competition CODE --season YYYY --matchday N\n' +
   '       pnpm sync:standings --help\n\n' +
   'Omit --season to load the current season.\n' +
   'Load the competition and teams for the requested season first.\n' +
-  'An empty standings response clears the requested season.';
+  'An empty standings response clears the requested season.\n' +
+  'Use --matchday with --season to append reconstructed round history.\n' +
+  'Round history excludes deducted points. An empty history response fails.';
 
 function parseOptions(args: string[]) {
   const { values } = parseArgs({
     args,
-    options: competitionOptions,
+    options: { ...competitionOptions, matchday: { type: 'string' } },
     allowPositionals: false,
   });
 
   if (values.help) return null;
 
-  return parseCompetitionOptions(values);
+  const options = parseCompetitionOptions(values);
+  const matchday =
+    values.matchday === undefined ? undefined : Number(values.matchday);
+  if (
+    values.matchday !== undefined &&
+    (!/^[1-9]\d*$/.test(values.matchday) ||
+      !Number.isSafeInteger(matchday) ||
+      options.season === undefined)
+  ) {
+    throw new RangeError('matchday requires season and a positive safe integer');
+  }
+
+  return { ...options, matchday };
 }
 
 export async function runStandingsCommand(args: string[]) {
@@ -48,10 +63,12 @@ export async function runStandingsCommand(args: string[]) {
     const { syncCompetitionStandings } = await import('./standings');
     const { competitionCode, season, rowCount } = await syncCompetitionStandings(
       options.competitionCode,
-      { season: options.season },
+      { season: options.season, matchday: options.matchday },
     );
     console.log(
-      `Synced ${rowCount} standings rows for ${competitionCode} ${season}.`,
+      options.matchday === undefined
+        ? `Synced ${rowCount} standings rows for ${competitionCode} ${season}.`
+        : `Captured ${rowCount} reconstructed standings rows for ${competitionCode} ${season}, matchday ${options.matchday}.`,
     );
     return 0;
   } catch {

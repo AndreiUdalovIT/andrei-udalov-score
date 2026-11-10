@@ -38,6 +38,7 @@ describe('standings sync command', () => {
     expect(mocks.loadEnvConfig).toHaveBeenCalledOnce();
     expect(mocks.syncCompetitionStandings).toHaveBeenCalledExactlyOnceWith('PL', {
       season: 2025,
+      matchday: undefined,
     });
     expect(mocks.loadEnvConfig.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.syncCompetitionStandings.mock.invocationCallOrder[0]!,
@@ -48,6 +49,27 @@ describe('standings sync command', () => {
     expect(console.error).not.toHaveBeenCalled();
   });
 
+  it('passes an explicit round and identifies reconstructed history in the output', async () => {
+    expect(
+      await runStandingsCommand([
+        '--competition',
+        'PL',
+        '--season',
+        '2025',
+        '--matchday',
+        '10',
+      ]),
+    ).toBe(0);
+
+    expect(mocks.syncCompetitionStandings).toHaveBeenCalledExactlyOnceWith('PL', {
+      season: 2025,
+      matchday: 10,
+    });
+    expect(console.log).toHaveBeenCalledWith(
+      'Captured 20 reconstructed standings rows for PL 2025, matchday 10.',
+    );
+  });
+
   it('shows help without loading environment variables or running the sync', async () => {
     expect(await runStandingsCommand(['--help'])).toBe(0);
 
@@ -56,8 +78,14 @@ describe('standings sync command', () => {
     expect(mocks.syncCompetitionStandings).not.toHaveBeenCalled();
   });
 
-  it('rejects invalid arguments before loading the environment', async () => {
-    expect(await runStandingsCommand([])).toBe(2);
+  it.each([
+    [],
+    ['--competition', 'PL', '--matchday', '10'],
+    ['--competition', 'PL', '--season', '2025', '--matchday', '0'],
+    ['--competition', 'PL', '--season', '2025', '--matchday', '1.5'],
+    ['--competition', 'PL', '--season', '2025', '--matchday', '9007199254740992'],
+  ])('rejects invalid arguments before loading the environment', async (...args) => {
+    expect(await runStandingsCommand(args)).toBe(2);
 
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining('Invalid arguments.'),

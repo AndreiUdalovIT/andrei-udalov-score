@@ -82,6 +82,7 @@ describe('competition standings sync', () => {
     });
     expect(mocks.getCompetitionStandings).toHaveBeenCalledWith('PL', {
       season: undefined,
+      matchday: undefined,
       signal: undefined,
     });
     expect(mocks.batch).toHaveBeenCalledOnce();
@@ -129,6 +130,7 @@ describe('competition standings sync', () => {
 
     expect(mocks.getCompetitionStandings).toHaveBeenCalledWith('PL', {
       season: 2024,
+      matchday: undefined,
       signal: undefined,
     });
     const queries = getQueries();
@@ -136,6 +138,51 @@ describe('competition standings sync', () => {
     expect(queries[0]?.params).toEqual([2021, 2024]);
     expect(queries[1]?.params.slice(0, 3)).toEqual([2021, 2024, 57]);
   });
+
+  it('captures the requested reconstructed round as a separate snapshot', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-10T02:00:00Z'));
+
+    await expect(
+      syncCompetitionStandings('PL', { season: 2026, matchday: 10 }),
+    ).resolves.toEqual({
+      competitionCode: 'PL',
+      season: 2026,
+      rowCount: 2,
+    });
+
+    expect(mocks.getCompetitionStandings).toHaveBeenCalledExactlyOnceWith('PL', {
+      season: 2026,
+      matchday: 10,
+      signal: undefined,
+    });
+    expect(mocks.batch).toHaveBeenCalledOnce();
+    const queries = getQueries();
+    expect(queries).toHaveLength(1);
+    expect(queries[0]?.sql).toContain('insert into "standings_snapshots"');
+    expect(queries[0]?.params.slice(0, 5)).toEqual([
+      2021,
+      2026,
+      'reconstructed',
+      10,
+      '2026-11-10T02:00:00.000Z',
+    ]);
+    expect(JSON.parse(String(queries[0]?.params[5]))).toMatchObject([
+      { teamId: 57, position: 1, points: 24, stage: 'REGULAR_SEASON' },
+      { teamId: 71, position: 20, points: 5, stage: 'REGULAR_SEASON' },
+    ]);
+  });
+
+  it.each([{ matchday: 10 }, { season: 2026, matchday: 10, captureOfficial: true }])(
+    'rejects ambiguous history options before loading data',
+    async (options) => {
+      await expect(syncCompetitionStandings('PL', options)).rejects.toThrow(
+        RangeError,
+      );
+      expect(mocks.getCompetitionStandings).not.toHaveBeenCalled();
+      expect(mocks.batch).not.toHaveBeenCalled();
+    },
+  );
 
   it('rejects a season change before replacing the table or capturing it', async () => {
     mocks.getCompetitionStandings.mockResolvedValue({
@@ -170,7 +217,7 @@ describe('competition standings sync', () => {
         table: [],
       })),
     },
-  ])('clears only the scoped season for $label', async ({ standings }) => {
+  ])('handles $label for each sync mode', async ({ standings }) => {
     mocks.getCompetitionStandings.mockResolvedValue({ ...response, standings });
 
     await expect(
@@ -188,6 +235,12 @@ describe('competition standings sync', () => {
     expect(queries[0]?.params).toEqual([2021, 2026]);
     expect(queries[1]?.sql).toContain('insert into "standings_snapshots"');
     expect(JSON.parse(String(queries[1]?.params[5]))).toEqual([]);
+
+    mocks.batch.mockClear();
+    await expect(
+      syncCompetitionStandings('PL', { season: 2026, matchday: 10 }),
+    ).rejects.toThrow('standings history response has no TOTAL rows');
+    expect(mocks.batch).not.toHaveBeenCalled();
   });
 
   it('rejects a nonempty response without TOTAL before deleting saved rows', async () => {

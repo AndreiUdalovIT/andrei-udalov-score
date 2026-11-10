@@ -12,7 +12,7 @@ type StandingsHistorySyncOptions = {
   requestCounter?: ClientOptions['requestCounter'];
 };
 
-const historyCompetitionCodes = ['PL', 'PD', 'BL1', 'SA', 'FL1'] as const;
+export const historyCompetitionCodes = ['PL', 'PD', 'BL1', 'SA', 'FL1'] as const;
 
 export async function syncCompetitionStandingsHistory(
   competitionCode: string,

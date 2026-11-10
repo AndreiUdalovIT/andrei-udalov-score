@@ -8,11 +8,13 @@ import { parseCompetitionOptions } from './command-options';
 
 const USAGE =
   'Usage: pnpm sync:seed --competition CODE [--competition CODE ...]\n' +
-  '       [--history-seasons N]\n' +
+  '       [--history-seasons N] [--standings-history]\n' +
   '       pnpm sync:seed --help\n\n' +
   'Syncs the current season and up to N previous seasons from each catalog (default: 3).\n' +
   'Use 0 to sync only the current season. Current squads are included.\n' +
-  'Completed datasets remain saved if a later operation fails.';
+  'Use --standings-history to import round snapshots for configured PL, PD, BL1, SA and FL1 seasons.\n' +
+  'Historical round counts come from configuration. The current round is reloaded from the catalog.\n' +
+  'Completed datasets and snapshots remain saved if a later operation fails.';
 
 function parseOptions(args: string[]) {
   const { values } = parseArgs({
@@ -20,6 +22,7 @@ function parseOptions(args: string[]) {
     options: {
       competition: { type: 'string', multiple: true },
       'history-seasons': { type: 'string' },
+      'standings-history': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
     allowPositionals: false,
@@ -45,6 +48,7 @@ function parseOptions(args: string[]) {
       (competition) => parseCompetitionOptions({ competition }).competitionCode,
     ),
     historySeasons,
+    includeStandingsHistory: values['standings-history'] ?? false,
   };
 }
 
@@ -62,7 +66,7 @@ export async function runSeedCommand(args: string[]) {
     return 0;
   }
 
-  const { competitionCodes, historySeasons } = options;
+  const { competitionCodes, historySeasons, includeStandingsHistory } = options;
   try {
     // Load environment variables before importing the database client.
     loadEnvConfig(process.cwd(), process.env.NODE_ENV !== 'production', {
@@ -71,17 +75,26 @@ export async function runSeedCommand(args: string[]) {
     });
     const { runSync } = await import('./run');
     const { syncSeedCompetitions } = await import('./seed');
-    const { competitions, history, squadCount } = await runSync(
+    const { competitions, history, squadCount, standingsHistory } = await runSync(
       'seed',
       competitionCodes,
       (requestCounter) =>
-        syncSeedCompetitions(competitionCodes, { historySeasons, requestCounter }),
+        syncSeedCompetitions(competitionCodes, {
+          historySeasons,
+          includeStandingsHistory,
+          requestCounter,
+        }),
     );
     for (const competition of [...history, ...competitions]) {
       console.log(
         `Synced ${competition.competitionCode} ${competition.season}. ` +
           `${competition.teamCount} teams, ${competition.matchCount} matches, ` +
           `${competition.standingsCount} standings rows, ${competition.scorerCount} scorers.`,
+      );
+    }
+    for (const capture of standingsHistory) {
+      console.log(
+        `Captured ${capture.snapshots.length} reconstructed standings snapshots for ${capture.competitionCode} ${capture.season}.`,
       );
     }
     console.log(`Synced ${squadCount} unique current team squads.`);

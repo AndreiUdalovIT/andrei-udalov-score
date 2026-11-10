@@ -13,6 +13,7 @@ type StandingsSyncOptions = {
   season?: number;
   /** Reconstructed history for one round, requiring an explicit season. */
   matchday?: number;
+  expectedTable?: { teamCount: number; stage: string };
   captureOfficial?: boolean;
   signal?: AbortSignal;
   requestCounter?: ClientOptions['requestCounter'];
@@ -24,6 +25,7 @@ export async function syncCompetitionStandings(
   {
     season,
     matchday,
+    expectedTable,
     captureOfficial = false,
     signal,
     requestCounter,
@@ -53,6 +55,15 @@ export async function syncCompetitionStandings(
   const rows = mapStandings(response);
   if (matchday !== undefined && rows.length === 0) {
     throw new Error('standings history response has no TOTAL rows');
+  }
+  if (
+    expectedTable &&
+    (rows.length !== expectedTable.teamCount ||
+      rows.some((row) => row.stage !== expectedTable.stage))
+  ) {
+    throw new Error(
+      'standings history response does not match the configured table',
+    );
   }
   const competitionId = response.competition.id;
 

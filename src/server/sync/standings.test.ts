@@ -144,7 +144,11 @@ describe('competition standings sync', () => {
     vi.setSystemTime(new Date('2026-11-10T02:00:00Z'));
 
     await expect(
-      syncCompetitionStandings('PL', { season: 2026, matchday: 10 }),
+      syncCompetitionStandings('PL', {
+        season: 2026,
+        matchday: 10,
+        expectedTable: { teamCount: 2, stage: 'REGULAR_SEASON' },
+      }),
     ).resolves.toEqual({
       competitionCode: 'PL',
       season: 2026,
@@ -172,6 +176,25 @@ describe('competition standings sync', () => {
       { teamId: 71, position: 20, points: 5, stage: 'REGULAR_SEASON' },
     ]);
   });
+
+  it.each([
+    { teamCount: 20, stage: 'REGULAR_SEASON' },
+    { teamCount: 2, stage: 'GROUP_STAGE' },
+  ])(
+    'rejects an unexpected table shape before capturing history',
+    async (expectedTable) => {
+      await expect(
+        syncCompetitionStandings('PL', {
+          season: 2026,
+          matchday: 10,
+          expectedTable,
+        }),
+      ).rejects.toThrow(
+        'standings history response does not match the configured table',
+      );
+      expect(mocks.batch).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([{ matchday: 10 }, { season: 2026, matchday: 10, captureOfficial: true }])(
     'rejects ambiguous history options before loading data',

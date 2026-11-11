@@ -40,15 +40,39 @@ describe('team strength coefficients', () => {
     ]);
 
     expect(calculateTeamStrengths(Object.freeze([1]), rows, before, 1)).toEqual({
-      league: { matchCount: 3, homeGoalsPerMatch: 2, awayGoalsPerMatch: 1 },
+      league: {
+        matchCount: 3,
+        effectiveMatchCount: 25 / 9,
+        homeGoalsPerMatch: 2,
+        awayGoalsPerMatch: 1,
+      },
       teams: [
         {
           teamId: 1,
-          home: { matchCount: 1, attack: 2, defence: 1 },
-          away: { matchCount: 1, attack: 3, defence: 1 },
+          home: { matchCount: 1, effectiveMatchCount: 1, attack: 2, defence: 1 },
+          away: { matchCount: 1, effectiveMatchCount: 1, attack: 3, defence: 1 },
         },
       ],
     });
+  });
+
+  it('reports the effective sample separately for home and away matches', () => {
+    const rows = [
+      match,
+      {
+        ...match,
+        id: 2,
+        utcDate: new Date('2026-11-09T12:00:00Z'),
+        lastUpdated: new Date('2026-11-09T14:00:00Z'),
+      },
+      { ...match, id: 3, homeTeamId: 2, awayTeamId: 1 },
+    ];
+    const team = calculateTeamStrengths([1], rows, before, 1).teams[0];
+
+    expect(team?.home?.matchCount).toBe(2);
+    expect(team?.home?.effectiveMatchCount).toBeCloseTo(1.8, 12);
+    expect(team?.away?.matchCount).toBe(1);
+    expect(team?.away?.effectiveMatchCount).toBe(1);
   });
 
   it('preserves participant order, deduplicates IDs and retains missing venues', () => {
@@ -58,11 +82,11 @@ describe('team strength coefficients', () => {
       {
         teamId: 2,
         home: null,
-        away: { matchCount: 1, attack: 1, defence: 1 },
+        away: { matchCount: 1, effectiveMatchCount: 1, attack: 1, defence: 1 },
       },
       {
         teamId: 1,
-        home: { matchCount: 1, attack: 1, defence: 1 },
+        home: { matchCount: 1, effectiveMatchCount: 1, attack: 1, defence: 1 },
         away: null,
       },
       { teamId: 99, home: null, away: null },
@@ -75,7 +99,7 @@ describe('team strength coefficients', () => {
     expect(calculateTeamStrengths([1], [zeroDraw], before, 1).teams).toEqual([
       {
         teamId: 1,
-        home: { matchCount: 1, attack: null, defence: null },
+        home: { matchCount: 1, effectiveMatchCount: 1, attack: null, defence: null },
         away: null,
       },
     ]);
@@ -99,6 +123,7 @@ describe('team strength coefficients', () => {
 
     expect(result.teams[0]?.home).toEqual({
       matchCount: 1,
+      effectiveMatchCount: 1,
       attack: 0,
       defence: 0,
     });
@@ -127,6 +152,7 @@ describe('team strength coefficients', () => {
 
     expect(calculateTeamStrengths([1], rows, before, 1).teams[0]?.home).toEqual({
       matchCount: 1,
+      effectiveMatchCount: 1,
       attack: null,
       defence: 1,
     });

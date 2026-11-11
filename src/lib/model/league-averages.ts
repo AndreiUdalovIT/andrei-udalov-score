@@ -2,6 +2,8 @@ import { selectTrainingMatches, type ModelMatch } from './matches';
 
 export type LeagueAverages = {
   matchCount: number;
+  /** Effective sample size from the match weights. */
+  effectiveMatchCount: number;
   homeGoalsPerMatch: number;
   awayGoalsPerMatch: number;
 };
@@ -25,6 +27,7 @@ export function calculateLeagueAverages(
     -Infinity,
   );
   let weightSum = 0;
+  let squaredWeightSum = 0;
   let homeGoals = 0;
   let awayGoals = 0;
 
@@ -33,12 +36,17 @@ export function calculateLeagueAverages(
     const weight = 2 ** (-ageDays / halfLifeDays);
 
     weightSum += weight;
+    squaredWeightSum += weight * weight;
     homeGoals += match.homeGoals90 * weight;
     awayGoals += match.awayGoals90 * weight;
   }
 
   return {
     matchCount: selected.length,
+    effectiveMatchCount: Math.min(
+      selected.length,
+      (weightSum * weightSum) / squaredWeightSum,
+    ),
     homeGoalsPerMatch: homeGoals / weightSum,
     awayGoalsPerMatch: awayGoals / weightSum,
   };

@@ -3,6 +3,7 @@ import type { ModelMatch } from './matches';
 
 export type VenueStrength = {
   matchCount: number;
+  effectiveMatchCount: number;
   attack: number | null;
   /** Goals conceded relative to the league. Lower is stronger. */
   defence: number | null;
@@ -46,6 +47,7 @@ export function calculateTeamStrengths(
           ? null
           : {
               matchCount: home.matchCount,
+              effectiveMatchCount: home.effectiveMatchCount,
               attack: relativeRate(home.homeGoalsPerMatch, league.homeGoalsPerMatch),
               defence: relativeRate(
                 home.awayGoalsPerMatch,
@@ -57,6 +59,7 @@ export function calculateTeamStrengths(
           ? null
           : {
               matchCount: away.matchCount,
+              effectiveMatchCount: away.effectiveMatchCount,
               attack: relativeRate(away.awayGoalsPerMatch, league.awayGoalsPerMatch),
               defence: relativeRate(
                 away.homeGoalsPerMatch,

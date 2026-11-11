@@ -30,6 +30,7 @@ const result = {
   competitions: [competition],
   history: [{ ...competition, season: 2025 }],
   squadCount: 20,
+  standingsHistory: [],
 };
 
 beforeEach(() => {
@@ -68,6 +69,7 @@ describe('seed sync command', () => {
     );
     expect(mocks.syncSeedCompetitions).toHaveBeenCalledExactlyOnceWith(['PL'], {
       historySeasons: undefined,
+      includeStandingsHistory: false,
       requestCounter,
     });
     expect(mocks.syncSeedCompetitions.mock.calls[0]?.[1]?.requestCounter).toBe(
@@ -111,10 +113,37 @@ describe('seed sync command', () => {
 
       expect(mocks.syncSeedCompetitions).toHaveBeenCalledExactlyOnceWith(['PL'], {
         historySeasons,
+        includeStandingsHistory: false,
         requestCounter,
       });
     },
   );
+
+  it('enables standings history and prints the snapshot count', async () => {
+    mocks.syncSeedCompetitions.mockResolvedValueOnce({
+      ...result,
+      standingsHistory: [
+        {
+          competitionCode: 'PL',
+          season: 2025,
+          snapshots: [{ matchday: 1, rowCount: 20 }],
+        },
+      ],
+    });
+
+    expect(
+      await runSeedCommand(['--competition', 'PL', '--standings-history']),
+    ).toBe(0);
+
+    expect(mocks.syncSeedCompetitions).toHaveBeenCalledExactlyOnceWith(['PL'], {
+      historySeasons: undefined,
+      includeStandingsHistory: true,
+      requestCounter,
+    });
+    expect(console.log).toHaveBeenCalledWith(
+      'Captured 1 reconstructed standings snapshots for PL 2025.',
+    );
+  });
 
   it.each(['-1', '1e3', '9007199254740992'])(
     'rejects invalid history depth %s before starting a run',

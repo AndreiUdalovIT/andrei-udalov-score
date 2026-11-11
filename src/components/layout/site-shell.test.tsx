@@ -5,6 +5,14 @@ import { expect, it, vi } from 'vitest';
 import { SiteShell } from './site-shell';
 
 vi.mock('next/navigation', () => ({ usePathname: () => '/' }));
+vi.mock('./site-sync', async () => {
+  const { Logo } = await import('./logo');
+  return {
+    SiteSyncLogo: Logo,
+    SiteSyncIndicator: () => null,
+    SiteSyncTimestamp: () => null,
+  };
+});
 
 it('starts the tab order with a link that skips to the content', async () => {
   render(<SiteShell>Страница</SiteShell>);

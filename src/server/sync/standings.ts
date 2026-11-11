@@ -2,15 +2,19 @@ import 'server-only';
 
 import { and, eq } from 'drizzle-orm';
 
-import { createFootballDataApi } from '@/lib/football-data/api';
+import { createFootballDataApi, validateSeason } from '@/lib/football-data/api';
 import type { ClientOptions } from '@/lib/football-data/client';
 import { mapStandings } from '@/lib/football-data/mappers/standings';
 
 import { db } from '../db/client';
-import { standings } from '../db/schema';
+import { standings, standingsSnapshots } from '../db/schema';
 
 type StandingsSyncOptions = {
   season?: number;
+  /** Reconstructed history for one round, requiring an explicit season. */
+  matchday?: number;
+  expectedTable?: { teamCount: number; stage: string };
+  captureOfficial?: boolean;
   signal?: AbortSignal;
   requestCounter?: ClientOptions['requestCounter'];
 };
@@ -18,20 +22,50 @@ type StandingsSyncOptions = {
 // Sync the competition and its season's teams before saving standings.
 export async function syncCompetitionStandings(
   competitionCode: string,
-  { season, signal, requestCounter }: StandingsSyncOptions = {},
+  {
+    season,
+    matchday,
+    expectedTable,
+    captureOfficial = false,
+    signal,
+    requestCounter,
+  }: StandingsSyncOptions = {},
 ) {
+  validateSeason(season);
+  if (matchday !== undefined && (season === undefined || captureOfficial)) {
+    throw new RangeError(
+      'matchday requires season and cannot capture official standings',
+    );
+  }
   const api = createFootballDataApi({ requestCounter });
   const response = await api.getCompetitionStandings(competitionCode, {
-    season,
+    season: captureOfficial ? undefined : season,
+    matchday,
     signal,
   });
+  const capturedAt = new Date();
   if (signal?.aborted) {
     throw new DOMException('football-data standings sync aborted', 'AbortError');
   }
 
-  const rows = mapStandings(response);
-  const competitionId = response.competition.id;
   const seasonYear = Number(response.season.startDate.slice(0, 4));
+  if (season !== undefined && seasonYear !== season) {
+    throw new Error('competition season changed during standings sync');
+  }
+  const rows = mapStandings(response);
+  if (matchday !== undefined && rows.length === 0) {
+    throw new Error('standings history response has no TOTAL rows');
+  }
+  if (
+    expectedTable &&
+    (rows.length !== expectedTable.teamCount ||
+      rows.some((row) => row.stage !== expectedTable.stage))
+  ) {
+    throw new Error(
+      'standings history response does not match the configured table',
+    );
+  }
+  const competitionId = response.competition.id;
 
   try {
     const removePrevious = db
@@ -42,11 +76,32 @@ export async function syncCompetitionStandings(
           eq(standings.season, seasonYear),
         ),
       );
-    // Replace the complete season snapshot in one short transaction.
+    const insertRows = rows.length === 0 ? [] : [db.insert(standings).values(rows)];
+    const capture = db.insert(standingsSnapshots).values({
+      competitionId,
+      season: seasonYear,
+      source: matchday === undefined ? 'official' : 'reconstructed',
+      matchday: matchday ?? response.season.currentMatchday,
+      capturedAt,
+      rows: rows.map((row) => ({
+        teamId: row.teamId,
+        stage: row.stage,
+        group: row.group,
+        position: row.position,
+        playedGames: row.playedGames,
+        won: row.won,
+        draw: row.draw,
+        lost: row.lost,
+        points: row.points,
+        goalsFor: row.goalsFor,
+        goalsAgainst: row.goalsAgainst,
+      })),
+    });
+    // Round history is appended independently of the current table.
     await db.batch(
-      rows.length === 0
-        ? [removePrevious]
-        : [removePrevious, db.insert(standings).values(rows)],
+      matchday === undefined
+        ? [removePrevious, ...insertRows, ...(captureOfficial ? [capture] : [])]
+        : [capture],
     );
   } catch {
     // Driver errors may contain connection details or query parameters.

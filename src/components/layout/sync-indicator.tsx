@@ -1,20 +1,21 @@
 import { Clock } from 'lucide-react';
 
+import { SyncTime } from '@/components/common/sync-time';
+
 import { cn } from '@/lib/utils';
 
 /**
- * «Обновлено 2 ч назад». Fed by the last successful sync from stage 1;
- * until there is one, it stays out of the header instead of showing a dash.
+ * A relative age of the site's last successful sync; hidden while it is unknown.
  */
 export function SyncIndicator({
-  label,
+  lastSyncedAt,
   className,
 }: {
-  /** Ready-made relative time, e.g. «2 ч назад»; `null` — no sync yet. */
-  label: string | null;
+  /** ISO timestamp; null means incomplete or unavailable journal coverage. */
+  lastSyncedAt: string | null;
   className?: string;
 }) {
-  if (!label) return null;
+  if (!lastSyncedAt) return null;
 
   return (
     <span
@@ -26,7 +27,10 @@ export function SyncIndicator({
       <Clock aria-hidden="true" className="size-3.5" />
       <span>
         <span className="sr-only">Данные обновлены </span>
-        {label}
+        <SyncTime
+          value={lastSyncedAt}
+          className="data-[stale=true]:text-status-live"
+        />
       </span>
     </span>
   );

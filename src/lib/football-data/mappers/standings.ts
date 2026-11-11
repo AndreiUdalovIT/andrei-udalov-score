@@ -8,7 +8,7 @@ export function mapStandings({
   competition,
   season,
   standings: apiStandings,
-}: ApiStandingsResponse): (typeof standings.$inferInsert)[] {
+}: ApiStandingsResponse): (typeof standings.$inferSelect)[] {
   const totals = apiStandings.filter((standing) => standing.type === 'TOTAL');
   if (apiStandings.length > 0 && totals.length === 0) {
     throw new Error('Standings response has no TOTAL table');
@@ -31,6 +31,8 @@ export function mapStandings({
         competitionId: competition.id,
         season: seasonYear,
         teamId: row.team.id,
+        stage: standing.stage,
+        group: standing.group,
         position: row.position,
         playedGames: row.playedGames,
         won: row.won,

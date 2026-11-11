@@ -1,7 +1,9 @@
 import { render, screen } from '@testing-library/react';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 
 import { Footer } from './footer';
+
+vi.mock('./site-sync', () => ({ SiteSyncTimestamp: () => null }));
 
 it('tells screen readers which links open a new tab', () => {
   render(<Footer />);

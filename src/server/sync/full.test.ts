@@ -114,13 +114,23 @@ describe('full competition sync', () => {
     expect(mocks.syncCompetitionTeams).toHaveBeenNthCalledWith(2, 'CL', options);
     for (const syncDataset of [
       mocks.syncCompetitionMatches,
-      mocks.syncCompetitionStandings,
       mocks.syncCompetitionScorers,
     ]) {
       expect(syncDataset).toHaveBeenCalledTimes(2);
       expect(syncDataset).toHaveBeenCalledWith('PL', { season: 2026, ...options });
       expect(syncDataset).toHaveBeenCalledWith('CL', { season: 2025, ...options });
     }
+    expect(mocks.syncCompetitionStandings).toHaveBeenCalledTimes(2);
+    expect(mocks.syncCompetitionStandings).toHaveBeenCalledWith('PL', {
+      season: 2026,
+      ...options,
+      captureOfficial: true,
+    });
+    expect(mocks.syncCompetitionStandings).toHaveBeenCalledWith('CL', {
+      season: 2025,
+      ...options,
+      captureOfficial: true,
+    });
     expect(mocks.syncTeamSquad).toHaveBeenCalledTimes(3);
     for (const teamId of [57, 65, 851]) {
       expect(mocks.syncTeamSquad).toHaveBeenCalledWith(teamId, options);

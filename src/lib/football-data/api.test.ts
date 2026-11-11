@@ -462,19 +462,29 @@ describe('getCompetitionStandings', () => {
     },
   );
 
-  it('normalizes the competition code and sends the season filter', async () => {
-    fetchMock.mockResolvedValue(Response.json(standingsFixture.league));
-    const api = createFootballDataApi({ token: TOKEN });
+  it.each([
+    { filters: { season: 2026 }, query: 'season=2026' },
+    { filters: { matchday: 10 }, query: 'matchday=10' },
+    {
+      filters: { season: 2026, matchday: 10 },
+      query: 'season=2026&matchday=10',
+    },
+  ])(
+    'normalizes the competition code and sends $query',
+    async ({ filters, query }) => {
+      fetchMock.mockResolvedValue(Response.json(standingsFixture.league));
+      const api = createFootballDataApi({ token: TOKEN });
 
-    await api.getCompetitionStandings(' pl ', { season: 2026 });
+      await api.getCompetitionStandings(' pl ', filters);
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      new URL(
-        'https://api.football-data.org/v4/competitions/PL/standings?season=2026',
-      ),
-      expect.any(Object),
-    );
-  });
+      expect(fetchMock).toHaveBeenCalledWith(
+        new URL(
+          `https://api.football-data.org/v4/competitions/PL/standings?${query}`,
+        ),
+        expect.any(Object),
+      );
+    },
+  );
 
   it('returns every provided table type for the mapper to select', async () => {
     fetchMock.mockResolvedValue(
@@ -570,6 +580,18 @@ describe('getCompetitionStandings', () => {
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
+    'rejects an invalid matchday (%s) before making a request',
+    async (matchday) => {
+      const api = createFootballDataApi({ token: TOKEN });
+
+      await expect(api.getCompetitionStandings('PL', { matchday })).rejects.toThrow(
+        RangeError,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   it('forwards cancellation to the HTTP client', async () => {
     const controller = new AbortController();

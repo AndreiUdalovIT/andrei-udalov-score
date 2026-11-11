@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ModelMatch } from './matches';
-import { calculateRegularizedTeamStrengths } from './regularized-strengths';
+import {
+  calculateRegularizedTeamStrengths,
+  type TeamStrengthPrior,
+} from './regularized-strengths';
 
 const before = new Date('2026-11-11T12:00:00Z');
 const options = Object.freeze({
@@ -117,6 +120,123 @@ describe('regularized team strengths', () => {
       },
       away: null,
     });
+  });
+
+  it('mixes venue priors with observed data and keeps native sample counts', () => {
+    const prior = Object.freeze({ attack: 0.8, defence: 1.5 });
+    const priors = new Map<number, TeamStrengthPrior>([
+      [1, Object.freeze({ home: prior, away: null })],
+      [99, Object.freeze({ home: null, away: prior })],
+    ]);
+    const rows = Object.freeze([
+      Object.freeze(match),
+      Object.freeze({
+        ...match,
+        id: 2,
+        homeTeamId: 2,
+        awayTeamId: 1,
+        homeGoals90: 0,
+        awayGoals90: 2,
+      }),
+    ]);
+    const result = calculateRegularizedTeamStrengths(
+      Object.freeze([1, 99]),
+      rows,
+      before,
+      options,
+      priors,
+    );
+
+    expect(result.teams[0]?.home).toMatchObject({
+      matchCount: 1,
+      effectiveMatchCount: 1,
+      lowData: true,
+    });
+    expect(result.teams[0]?.home?.attack).toBeCloseTo(1.1, 12);
+    expect(result.teams[0]?.home?.defence).toBe(1.125);
+    expect(result.teams[0]?.away?.attack).toBe(1.25);
+    expect(result.teams[0]?.away?.defence).toBe(0.75);
+    expect(result.teams[1]).toEqual({
+      teamId: 99,
+      home: null,
+      away: {
+        matchCount: 0,
+        effectiveMatchCount: 0,
+        attack: 0.8,
+        defence: 1.5,
+        lowData: true,
+      },
+    });
+  });
+
+  it('avoids cancellation with extreme but finite prior coefficients', () => {
+    const result = calculateRegularizedTeamStrengths(
+      [1],
+      [
+        match,
+        {
+          ...match,
+          id: 2,
+          homeTeamId: 2,
+          awayTeamId: 1,
+          homeGoals90: 0,
+          awayGoals90: 2,
+        },
+      ],
+      before,
+      { ...options, priorMatchCount: Number.MIN_VALUE },
+      new Map([
+        [
+          1,
+          {
+            home: { attack: Number.MAX_VALUE, defence: Number.MAX_VALUE },
+            away: null,
+          },
+        ],
+      ]),
+    );
+
+    expect(result.teams[0]?.home?.attack).toBeCloseTo(2, 12);
+    expect(result.teams[0]?.home?.defence).toBeGreaterThan(0);
+  });
+
+  it('keeps undefined observed ratios when a prior is available', () => {
+    const priors = new Map<number, TeamStrengthPrior>([
+      [1, { home: { attack: 0.8, defence: 1.5 }, away: null }],
+    ]);
+    const result = calculateRegularizedTeamStrengths(
+      [1],
+      [{ ...match, homeGoals90: 0, awayGoals90: 0 }],
+      before,
+      options,
+      priors,
+    );
+
+    expect(result.teams[0]?.home).toMatchObject({
+      matchCount: 1,
+      attack: null,
+      defence: null,
+      lowData: true,
+    });
+  });
+
+  it('validates supplied priors even when the observed venue is empty', () => {
+    for (const prior of [
+      { attack: -1, defence: 1 },
+      { attack: 1, defence: -1 },
+      { attack: NaN, defence: 1 },
+      { attack: 1, defence: Infinity },
+    ]) {
+      expect(() =>
+        calculateRegularizedTeamStrengths(
+          [1],
+          [],
+          before,
+          options,
+          new Map([[1, { home: prior, away: null }]]),
+        ),
+      ).toThrow(RangeError);
+    }
   });
 
   it('validates configuration and cutoff even for empty samples', () => {

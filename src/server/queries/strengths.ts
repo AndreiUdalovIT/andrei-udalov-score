@@ -5,6 +5,15 @@ import { cacheLife, cacheTag } from 'next/cache';
 
 import { getCompetitionSeasonConfig } from '@/lib/config/competition-seasons';
 import type { CompetitionCode } from '@/lib/config/competitions';
+import { calculateExpectedGoals } from '@/lib/model/expected-goals';
+import {
+  compareGoalForecasts,
+  type GoalForecastCandidate,
+} from '@/lib/model/goal-comparison';
+import {
+  buildWalkForwardGoalForecasts,
+  type GoalValidationWindow,
+} from '@/lib/model/goal-walk-forward';
 import { selectTrainingMatches, type ModelMatch } from '@/lib/model/matches';
 import { calculatePromotedTeamStrengths } from '@/lib/model/promoted-strengths';
 import {
@@ -99,19 +108,38 @@ async function getCompetitionStrengthData(
   }
 }
 
-async function getPremierLeaguePromotionStrengths(
-  teamIds: readonly number[],
-  premierLeagueMatches: readonly ModelMatch[],
+async function loadCompetitionStrengthInputs(
+  competitionCode: CompetitionCode,
   season: number,
+) {
+  const data = await getCompetitionStrengthData(competitionCode, season);
+  if (data === null) return null;
+
+  const [history, calibration] =
+    competitionCode === 'PL'
+      ? await Promise.all([
+          getPromotionHistory(season),
+          getPromotionHistory(season - 1),
+        ])
+      : [null, null];
+  return { ...data, competitionCode, season, history, calibration };
+}
+
+type CompetitionStrengthInputs = NonNullable<
+  Awaited<ReturnType<typeof loadCompetitionStrengthInputs>>
+>;
+
+function calculatePremierLeaguePromotionStrengths(
+  data: CompetitionStrengthInputs,
+  premierLeagueMatches: readonly ModelMatch[],
   before: Date,
   options: PromotionAdjustmentOptions,
 ) {
-  const [history, calibration] = await Promise.all([
-    getPromotionHistory(season),
-    getPromotionHistory(season - 1),
-  ]);
+  const { history, calibration } = data;
   const previousTeamIds = new Set(history?.previousPremierLeagueTeamIds ?? []);
-  const newcomerTeamIds = teamIds.filter((teamId) => !previousTeamIds.has(teamId));
+  const newcomerTeamIds = data.teamIds.filter(
+    (teamId) => !previousTeamIds.has(teamId),
+  );
   const adjustment = estimatePromotionAdjustment(
     calibration?.promotedTeamIds ?? [],
     calibration?.championshipMatches ?? [],
@@ -139,23 +167,12 @@ async function getPremierLeaguePromotionStrengths(
   };
 }
 
-/**
- * Current participants, using this and the previous configured season.
- * Only DB inputs are cached; the cutoff and model options apply on every call.
- * The cutoff uses current result records, without historical result versions.
- * Domestic newcomers require sufficient native venue history unless a PL
- * newcomer has a usable adjusted ELC prior.
- * CL requires sufficient history in its own main stages for every team.
- */
-export async function getCompetitionStrengths(
-  competitionCode: CompetitionCode,
-  season: number,
+function calculateCompetitionStrengths(
+  data: CompetitionStrengthInputs,
   before: Date,
   options: PromotionAdjustmentOptions,
 ) {
-  const data = await getCompetitionStrengthData(competitionCode, season);
-  if (data === null) return null;
-
+  const { competitionCode, season } = data;
   const currentMatches = selectTrainingMatches(data.currentMatches, before);
   const previousMatches = selectTrainingMatches(data.previousMatches, before);
   const trainingMatches = [...previousMatches, ...currentMatches];
@@ -172,10 +189,9 @@ export async function getCompetitionStrengths(
   );
   const promotion =
     competitionCode === 'PL'
-      ? await getPremierLeaguePromotionStrengths(
-          data.teamIds,
+      ? calculatePremierLeaguePromotionStrengths(
+          data,
           trainingMatches,
-          season,
           before,
           options,
         )
@@ -211,5 +227,98 @@ export async function getCompetitionStrengths(
       };
     }),
     promotion: promotion?.details ?? null,
+  };
+}
+
+/**
+ * Current participants, using this and the previous configured season.
+ * Only DB inputs are cached; the cutoff and model options apply on every call.
+ * The cutoff uses current result records, without historical result versions.
+ * Domestic newcomers require sufficient native venue history unless a PL
+ * newcomer has a usable adjusted ELC prior.
+ * CL requires sufficient history in its own main stages for every team.
+ */
+export async function getCompetitionStrengths(
+  competitionCode: CompetitionCode,
+  season: number,
+  before: Date,
+  options: PromotionAdjustmentOptions,
+) {
+  const data = await loadCompetitionStrengthInputs(competitionCode, season);
+  return data === null ? null : calculateCompetitionStrengths(data, before, options);
+}
+
+export type StrengthValidationCandidate = {
+  id: string;
+  options: PromotionAdjustmentOptions;
+};
+
+/**
+ * Compare a season's main-stage forecasts using one set of loaded DB inputs.
+ * Each fixture uses its kickoff as the exclusive training cutoff.
+ * Earlier result revisions require separately captured versions.
+ * The caller selects tuning and final evaluation periods separately.
+ */
+export async function getCompetitionStrengthValidation(
+  competitionCode: CompetitionCode,
+  season: number,
+  window: GoalValidationWindow,
+  candidates: readonly StrengthValidationCandidate[],
+) {
+  if (candidates.length === 0) {
+    throw new RangeError('at least one strength validation candidate is required');
+  }
+  if (
+    new Set(candidates.map((candidate) => candidate.id)).size !== candidates.length
+  ) {
+    throw new RangeError('forecast candidate IDs must be unique');
+  }
+
+  const settings = candidates.map(({ id, options }) => ({
+    id,
+    options: { ...options },
+  }));
+  const period = {
+    from: new Date(window.from.getTime()),
+    until: new Date(window.until.getTime()),
+    resultsBefore: new Date(window.resultsBefore.getTime()),
+  };
+  const data = await loadCompetitionStrengthInputs(competitionCode, season);
+  if (data === null) return null;
+
+  const forecasts: GoalForecastCandidate[] = [];
+  for (const candidate of settings) {
+    const rows = await buildWalkForwardGoalForecasts(
+      data.currentMatches,
+      period,
+      ({ homeTeamId, awayTeamId, before }) => {
+        const strengths = calculateCompetitionStrengths(
+          data,
+          before,
+          candidate.options,
+        );
+        const home = strengths.teams.find((team) => team.teamId === homeTeamId);
+        const away = strengths.teams.find((team) => team.teamId === awayTeamId);
+        return calculateExpectedGoals(
+          strengths.league,
+          home?.home ?? null,
+          away?.away ?? null,
+        );
+      },
+    );
+    forecasts.push({ id: candidate.id, rows });
+  }
+
+  const comparison = compareGoalForecasts(forecasts);
+  return {
+    competitionCode,
+    season,
+    previousSeason: data.previousSeason,
+    window: period,
+    ...comparison,
+    candidates: comparison.candidates.map((candidate, index) => ({
+      ...candidate,
+      options: settings[index]!.options,
+    })),
   };
 }

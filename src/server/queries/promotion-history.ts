@@ -114,6 +114,7 @@ export async function getPromotionHistory(premierLeagueSeason: number) {
     return {
       premierLeagueSeason,
       championshipSeason,
+      previousPremierLeagueTeamIds: [...previousPremierLeagueTeams],
       promotedTeamIds,
       premierLeagueMatches: seasonMatches.filter(
         (match) => match.competitionCode === 'PL',

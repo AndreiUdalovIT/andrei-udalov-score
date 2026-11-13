@@ -5,15 +5,18 @@ import { cacheLife, cacheTag } from 'next/cache';
 
 import { getCompetitionSeasonConfig } from '@/lib/config/competition-seasons';
 import type { CompetitionCode } from '@/lib/config/competitions';
-import { selectTrainingMatches } from '@/lib/model/matches';
+import { selectTrainingMatches, type ModelMatch } from '@/lib/model/matches';
+import { calculatePromotedTeamStrengths } from '@/lib/model/promoted-strengths';
 import {
-  calculateRegularizedTeamStrengths,
-  type RegularizedStrengthOptions,
-} from '@/lib/model/regularized-strengths';
+  estimatePromotionAdjustment,
+  type PromotionAdjustmentOptions,
+} from '@/lib/model/promotion-adjustment';
+import { calculateRegularizedTeamStrengths } from '@/lib/model/regularized-strengths';
 
 import { footballCacheTags } from '../cache-tags';
 import { db } from '../db/client';
 import { competitions, matches, teamCompetitions } from '../db/schema';
+import { getPromotionHistory } from './promotion-history';
 
 async function getCompetitionStrengthData(
   competitionCode: CompetitionCode,
@@ -88,6 +91,46 @@ async function getCompetitionStrengthData(
   }
 }
 
+async function getPremierLeaguePromotionStrengths(
+  teamIds: readonly number[],
+  premierLeagueMatches: readonly ModelMatch[],
+  season: number,
+  before: Date,
+  options: PromotionAdjustmentOptions,
+) {
+  const [history, calibration] = await Promise.all([
+    getPromotionHistory(season),
+    getPromotionHistory(season - 1),
+  ]);
+  const previousTeamIds = new Set(history?.previousPremierLeagueTeamIds ?? []);
+  const newcomerTeamIds = teamIds.filter((teamId) => !previousTeamIds.has(teamId));
+  const adjustment = estimatePromotionAdjustment(
+    calibration?.promotedTeamIds ?? [],
+    calibration?.championshipMatches ?? [],
+    calibration?.premierLeagueMatches ?? [],
+    before,
+    options,
+  );
+  const strengths = calculatePromotedTeamStrengths(
+    newcomerTeamIds,
+    history?.championshipMatches ?? [],
+    premierLeagueMatches,
+    before,
+    adjustment,
+    options,
+  );
+
+  return {
+    teams: strengths.teams,
+    details: {
+      championshipSeason: history?.championshipSeason ?? null,
+      calibrationSeason: calibration?.premierLeagueSeason ?? null,
+      previousPremierLeagueTeamCount: previousTeamIds.size,
+      adjustment,
+    },
+  };
+}
+
 /**
  * Current participants, using this and the previous configured season.
  * Only DB inputs are cached; the cutoff and model options apply on every call.
@@ -97,18 +140,32 @@ export async function getCompetitionStrengths(
   competitionCode: CompetitionCode,
   season: number,
   before: Date,
-  options: RegularizedStrengthOptions,
+  options: PromotionAdjustmentOptions,
 ) {
   const data = await getCompetitionStrengthData(competitionCode, season);
   if (data === null) return null;
 
   const currentMatches = selectTrainingMatches(data.currentMatches, before);
   const previousMatches = selectTrainingMatches(data.previousMatches, before);
+  const trainingMatches = [...previousMatches, ...currentMatches];
   const strengths = calculateRegularizedTeamStrengths(
     data.teamIds,
-    [...previousMatches, ...currentMatches],
+    trainingMatches,
     before,
     options,
+  );
+  const promotion =
+    competitionCode === 'PL'
+      ? await getPremierLeaguePromotionStrengths(
+          data.teamIds,
+          trainingMatches,
+          season,
+          before,
+          options,
+        )
+      : null;
+  const promotedByTeam = new Map(
+    promotion?.teams.map((team) => [team.teamId, team]) ?? [],
   );
 
   return {
@@ -121,5 +178,7 @@ export async function getCompetitionStrengths(
       previousMatchCount: previousMatches.length,
     },
     ...strengths,
+    teams: strengths.teams.map((team) => promotedByTeam.get(team.teamId) ?? team),
+    promotion: promotion?.details ?? null,
   };
 }

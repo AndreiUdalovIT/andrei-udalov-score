@@ -14,7 +14,12 @@ import {
   buildWalkForwardGoalForecasts,
   type GoalValidationWindow,
 } from '@/lib/model/goal-walk-forward';
-import { selectTrainingMatches, type ModelMatch } from '@/lib/model/matches';
+import {
+  RECONSTRUCTED_RESULT_DELAY_HOURS,
+  reconstructResultAvailability,
+  selectTrainingMatches,
+  type ModelMatch,
+} from '@/lib/model/matches';
 import { calculatePromotedTeamStrengths } from '@/lib/model/promoted-strengths';
 import {
   estimatePromotionAdjustment,
@@ -128,6 +133,17 @@ async function loadCompetitionStrengthInputs(
 type CompetitionStrengthInputs = NonNullable<
   Awaited<ReturnType<typeof loadCompetitionStrengthInputs>>
 >;
+
+function reconstructPromotionHistory(history: CompetitionStrengthInputs['history']) {
+  if (!history) return history;
+  return {
+    ...history,
+    premierLeagueMatches: reconstructResultAvailability(
+      history.premierLeagueMatches,
+    ),
+    championshipMatches: reconstructResultAvailability(history.championshipMatches),
+  };
+}
 
 function calculatePremierLeaguePromotionStrengths(
   data: CompetitionStrengthInputs,
@@ -256,6 +272,8 @@ export type StrengthValidationCandidate = {
 /**
  * Compare a season's main-stage forecasts using one set of loaded DB inputs.
  * Each fixture uses its kickoff as the exclusive training cutoff.
+ * Reconstructed training availability assumes final scores after 24 hours.
+ * Validation outcomes use the API update cutoff in either mode.
  * Earlier result revisions require separately captured versions.
  * The caller selects tuning and final evaluation periods separately.
  */
@@ -264,7 +282,11 @@ export async function getCompetitionStrengthValidation(
   season: number,
   window: GoalValidationWindow,
   candidates: readonly StrengthValidationCandidate[],
+  availability: 'api-update' | 'reconstructed' = 'api-update',
 ) {
+  if (availability !== 'api-update' && availability !== 'reconstructed') {
+    throw new RangeError('unsupported result availability mode');
+  }
   if (candidates.length === 0) {
     throw new RangeError('at least one strength validation candidate is required');
   }
@@ -283,13 +305,23 @@ export async function getCompetitionStrengthValidation(
     until: new Date(window.until.getTime()),
     resultsBefore: new Date(window.resultsBefore.getTime()),
   };
-  const data = await loadCompetitionStrengthInputs(competitionCode, season);
-  if (data === null) return null;
+  const source = await loadCompetitionStrengthInputs(competitionCode, season);
+  if (source === null) return null;
+  const data =
+    availability === 'reconstructed'
+      ? {
+          ...source,
+          currentMatches: reconstructResultAvailability(source.currentMatches),
+          previousMatches: reconstructResultAvailability(source.previousMatches),
+          history: reconstructPromotionHistory(source.history),
+          calibration: reconstructPromotionHistory(source.calibration),
+        }
+      : source;
 
   const forecasts: GoalForecastCandidate[] = [];
   for (const candidate of settings) {
     const rows = await buildWalkForwardGoalForecasts(
-      data.currentMatches,
+      source.currentMatches,
       period,
       ({ homeTeamId, awayTeamId, before }) => {
         const strengths = calculateCompetitionStrengths(
@@ -315,6 +347,11 @@ export async function getCompetitionStrengthValidation(
     season,
     previousSeason: data.previousSeason,
     window: period,
+    resultAvailability: {
+      mode: availability,
+      delayHours:
+        availability === 'reconstructed' ? RECONSTRUCTED_RESULT_DELAY_HOURS : null,
+    },
     ...comparison,
     candidates: comparison.candidates.map((candidate, index) => ({
       ...candidate,

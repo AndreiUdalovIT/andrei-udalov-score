@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, asc, eq, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, or } from 'drizzle-orm';
 import { cacheLife, cacheTag } from 'next/cache';
 
 import { getCompetitionSeasonConfig } from '@/lib/config/competition-seasons';
@@ -38,13 +38,16 @@ async function getCompetitionStrengthData(
   try {
     const [participants, seasonMatches] = await db.batch([
       db
-        .select({ teamId: teamCompetitions.teamId })
+        .select({
+          teamId: teamCompetitions.teamId,
+          season: teamCompetitions.season,
+        })
         .from(teamCompetitions)
         .innerJoin(competitions, eq(teamCompetitions.competitionId, competitions.id))
         .where(
           and(
             eq(competitions.code, competitionCode),
-            eq(teamCompetitions.season, season),
+            inArray(teamCompetitions.season, [season - 1, season]),
           ),
         )
         .orderBy(asc(teamCompetitions.teamId)),
@@ -80,7 +83,12 @@ async function getCompetitionStrengthData(
     ]);
 
     return {
-      teamIds: participants.map((participant) => participant.teamId),
+      teamIds: participants
+        .filter((participant) => participant.season === season)
+        .map((participant) => participant.teamId),
+      previousTeamIds: participants
+        .filter((participant) => participant.season === season - 1)
+        .map((participant) => participant.teamId),
       previousSeason: previousConfig ? season - 1 : null,
       currentMatches: seasonMatches.filter((match) => match.season === season),
       previousMatches: seasonMatches.filter((match) => match.season === season - 1),
@@ -135,6 +143,9 @@ async function getPremierLeaguePromotionStrengths(
  * Current participants, using this and the previous configured season.
  * Only DB inputs are cached; the cutoff and model options apply on every call.
  * The cutoff uses current result records, without historical result versions.
+ * Domestic newcomers require sufficient native venue history unless a PL
+ * newcomer has a usable adjusted ELC prior.
+ * CL requires sufficient history in its own main stages for every team.
  */
 export async function getCompetitionStrengths(
   competitionCode: CompetitionCode,
@@ -148,6 +159,11 @@ export async function getCompetitionStrengths(
   const currentMatches = selectTrainingMatches(data.currentMatches, before);
   const previousMatches = selectTrainingMatches(data.previousMatches, before);
   const trainingMatches = [...previousMatches, ...currentMatches];
+  const previousTeamIds = new Set(data.previousTeamIds);
+  const teamsWithoutPreviousMembership = data.teamIds.filter(
+    (teamId) => !previousTeamIds.has(teamId),
+  );
+  const teamsRequiringHistory = new Set(teamsWithoutPreviousMembership);
   const strengths = calculateRegularizedTeamStrengths(
     data.teamIds,
     trainingMatches,
@@ -178,7 +194,22 @@ export async function getCompetitionStrengths(
       previousMatchCount: previousMatches.length,
     },
     ...strengths,
-    teams: strengths.teams.map((team) => promotedByTeam.get(team.teamId) ?? team),
+    history: {
+      previousParticipantCount: previousTeamIds.size,
+      teamsWithoutPreviousMembership,
+    },
+    teams: strengths.teams.map((team) => {
+      const promoted = promotedByTeam.get(team.teamId);
+      if (promoted) return promoted;
+
+      const requiresHistory =
+        competitionCode === 'CL' || teamsRequiringHistory.has(team.teamId);
+      return {
+        ...team,
+        home: requiresHistory && team.home?.lowData ? null : team.home,
+        away: requiresHistory && team.away?.lowData ? null : team.away,
+      };
+    }),
     promotion: promotion?.details ?? null,
   };
 }

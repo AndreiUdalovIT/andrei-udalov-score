@@ -5,6 +5,7 @@ import { cacheLife, cacheTag } from 'next/cache';
 
 import { getCompetitionSeasonConfig } from '@/lib/config/competition-seasons';
 import type { CompetitionCode } from '@/lib/config/competitions';
+import { strengthModelOptions } from '@/lib/config/model-strengths';
 import { calculateExpectedGoals } from '@/lib/model/expected-goals';
 import {
   compareGoalForecasts,
@@ -258,7 +259,7 @@ export async function getCompetitionStrengths(
   competitionCode: CompetitionCode,
   season: number,
   before: Date,
-  options: PromotionAdjustmentOptions,
+  options: PromotionAdjustmentOptions = strengthModelOptions[competitionCode],
 ) {
   const data = await loadCompetitionStrengthInputs(competitionCode, season);
   return data === null ? null : calculateCompetitionStrengths(data, before, options);

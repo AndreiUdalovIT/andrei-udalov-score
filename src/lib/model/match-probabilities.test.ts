@@ -12,6 +12,7 @@ describe('match probabilities from independent Poisson scores', () => {
       outcomes: { home: 0, draw: 1, away: 0 },
       over25: 0,
       bothTeamsToScore: 0,
+      topScores: [{ homeGoals: 0, awayGoals: 0, probability: 1 }],
     });
   });
 
@@ -75,6 +76,13 @@ describe('match probabilities from independent Poisson scores', () => {
     expect(result!.over25).toBe(0);
     expect(result!.bothTeamsToScore).toBe(0);
     expect(result!.tailUpperBound).toBeGreaterThan(1 - result!.outcomes.draw);
+    expect(
+      result!.topScores.map(({ homeGoals, awayGoals }) => [homeGoals, awayGoals]),
+    ).toEqual([
+      [0, 0],
+      [0, 1],
+      [1, 0],
+    ]);
   });
 
   it('retains rare events at small positive rates', () => {
@@ -118,5 +126,104 @@ describe('match probabilities from independent Poisson scores', () => {
     expect(() =>
       calculateMatchProbabilities(0, 0, { tailTolerance: 1e-10, maxGoals: -1 }),
     ).toThrow(RangeError);
+  });
+
+  it('returns three most likely scores with high-precision reference probabilities', () => {
+    const result = calculateMatchProbabilities(1.5, 0.8, options);
+    expect(
+      result!.topScores.map(({ homeGoals, awayGoals }) => [homeGoals, awayGoals]),
+    ).toEqual([
+      [1, 0],
+      [1, 1],
+      [2, 0],
+    ]);
+    const references = [0.1503882655842056, 0.12031061246736448, 0.1127911991881542];
+    for (const [index, reference] of references.entries()) {
+      expect(result!.topScores[index]?.probability).toBeCloseTo(reference, 14);
+    }
+  });
+
+  it('includes a third count two steps above the marginal mode', () => {
+    const result = calculateMatchProbabilities(1.99, 0, options);
+    expect(
+      result!.topScores.map(({ homeGoals, awayGoals }) => [homeGoals, awayGoals]),
+    ).toEqual([
+      [1, 0],
+      [2, 0],
+      [3, 0],
+    ]);
+  });
+
+  it('orders integer-mode ties by total goals and then home goals', () => {
+    for (const sample of [
+      {
+        home: 1,
+        away: 1,
+        scores: [
+          [0, 0],
+          [0, 1],
+          [1, 0],
+        ],
+      },
+      {
+        home: 16,
+        away: 0,
+        scores: [
+          [15, 0],
+          [16, 0],
+          [17, 0],
+        ],
+      },
+      {
+        home: 16,
+        away: 16,
+        scores: [
+          [15, 15],
+          [15, 16],
+          [16, 15],
+        ],
+      },
+    ]) {
+      const result = calculateMatchProbabilities(sample.home, sample.away, options);
+      expect(
+        result!.topScores.map(({ homeGoals, awayGoals }) => [homeGoals, awayGoals]),
+      ).toEqual(sample.scores);
+    }
+  });
+
+  it('matches ranking over a wider reference score grid', () => {
+    for (const [homeRate, awayRate] of [
+      [0.2, 0.7],
+      [1.5, 0.8],
+      [2.64, 1.1],
+      [10.3, 8.7],
+    ] as const) {
+      const result = calculateMatchProbabilities(homeRate, awayRate, options);
+      const reference = result!.probabilities.flatMap((row, homeGoals) =>
+        row.map((probability, awayGoals) => ({ homeGoals, awayGoals, probability })),
+      );
+      reference.sort(
+        (left, right) =>
+          right.probability - left.probability ||
+          left.homeGoals + left.awayGoals - (right.homeGoals + right.awayGoals) ||
+          left.homeGoals - right.homeGoals,
+      );
+      expect(result!.topScores).toEqual(reference.slice(0, 3));
+    }
+  });
+
+  it('ranks very small positive rates even when a probability underflows', () => {
+    for (const rate of [1e-200, Number.MIN_VALUE]) {
+      const result = calculateMatchProbabilities(rate, 0, options);
+      expect(
+        result!.topScores.map(({ homeGoals, awayGoals }) => [homeGoals, awayGoals]),
+      ).toEqual([
+        [0, 0],
+        [1, 0],
+        [2, 0],
+      ]);
+      expect(result!.topScores[1]!.probability / rate).toBeCloseTo(1, 12);
+      expect(result!.topScores[2]!.probability).toBe(0);
+    }
   });
 });

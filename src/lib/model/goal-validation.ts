@@ -1,5 +1,6 @@
 import type { ExpectedGoals } from './expected-goals';
 import type { TrainingMatch } from './matches';
+import { halfPoissonDeviance } from './poisson';
 
 export type GoalValidationRow = Pick<
   TrainingMatch,
@@ -7,30 +8,6 @@ export type GoalValidationRow = Pick<
 > & {
   expectedGoals: ExpectedGoals | null;
 };
-
-function halfPoissonDeviance(observed: number, expected: number): number {
-  if (!Number.isFinite(expected) || expected < 0) {
-    throw new RangeError('expected goals must be finite and non-negative');
-  }
-  if (observed === 0) return expected;
-  if (expected === 0) return Infinity;
-
-  const relative = (expected - observed) / observed;
-  if (Math.abs(relative) < 0.5) {
-    // Retain tiny losses when the rate nearly equals the observed count.
-    if (Math.abs(relative) < 1e-4) {
-      return (
-        observed *
-        relative *
-        relative *
-        (0.5 - relative / 3 + (relative * relative) / 4)
-      );
-    }
-    return observed * (relative - Math.log1p(relative));
-  }
-
-  return expected - observed + observed * (Math.log(observed) - Math.log(expected));
-}
 
 /**
  * Score one forecast per match, over both goal observations.

@@ -11,6 +11,7 @@ describe('match probabilities from independent Poisson scores', () => {
       tailUpperBound: 0,
       outcomes: { home: 0, draw: 1, away: 0 },
       percentages: { home: 0, draw: 100, away: 0 },
+      favorite: 'draw',
       over25: 0,
       bothTeamsToScore: 0,
       topScores: [{ homeGoals: 0, awayGoals: 0, probability: 1 }],
@@ -21,6 +22,7 @@ describe('match probabilities from independent Poisson scores', () => {
     const result = calculateMatchProbabilities(1.5, 0.8, options);
 
     expect(result!.percentages).toEqual({ home: 54, draw: 26, away: 20 });
+    expect(result!.favorite).toBe('home');
     expect(result!.outcomes.home).toBeCloseTo(0.5381655979967927, 13);
     expect(result!.outcomes.draw).toBeCloseTo(0.26185391289739517, 13);
     expect(result!.outcomes.away).toBeCloseTo(0.1999804891058121, 13);
@@ -227,5 +229,19 @@ describe('match probabilities from independent Poisson scores', () => {
       expect(result!.topScores[1]!.probability / rate).toBeCloseTo(1, 12);
       expect(result!.topScores[2]!.probability).toBe(0);
     }
+  });
+
+  it('selects the unrounded favorite when displayed percentages tie', () => {
+    const result = calculateMatchProbabilities(1.5, 1.501, options);
+    expect(result!.outcomes.away).toBeGreaterThan(result!.outcomes.home);
+    expect(result!.percentages.home).toBe(result!.percentages.away);
+    expect(result!.favorite).toBe('away');
+  });
+
+  it('prefers the first outcome when the largest raw probabilities tie', () => {
+    const result = calculateMatchProbabilities(1, 1, options);
+    expect(result!.outcomes.home).toBe(result!.outcomes.away);
+    expect(result!.outcomes.home).toBeGreaterThan(result!.outcomes.draw);
+    expect(result!.favorite).toBe('home');
   });
 });

@@ -17,6 +17,7 @@ export type MostLikelyScore = {
 export type MatchProbabilities = ScoreDistribution & {
   outcomes: Readonly<Record<Outcome, number>>;
   percentages: Readonly<Record<Outcome, number>>;
+  favorite: Outcome;
   over25: number;
   bothTeamsToScore: number;
   topScores: readonly MostLikelyScore[];
@@ -123,10 +124,14 @@ export function calculateMatchProbabilities(
     draw: Math.min(1, sums.draw.value),
     away: Math.min(1, sums.away.value),
   };
+  let favorite: Outcome = 'home';
+  if (outcomes.draw > outcomes[favorite]) favorite = 'draw';
+  if (outcomes.away > outcomes[favorite]) favorite = 'away';
   return {
     ...distribution,
     outcomes,
     percentages: roundOutcomePercentages(outcomes),
+    favorite,
     over25: Math.min(1, sums.over25.value),
     bothTeamsToScore: Math.min(1, sums.bothTeamsToScore.value),
     topScores: mostLikelyScores(homeRate, awayRate),

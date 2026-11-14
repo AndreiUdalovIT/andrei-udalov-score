@@ -91,12 +91,14 @@ export function FootballSection() {
               home={46}
               draw={25}
               away={29}
+              favorite="home"
               className="w-full max-w-42"
             />
             <PredictionBar
               home={45}
               draw={31}
               away={24}
+              favorite="home"
               outcome="home"
               className="w-full max-w-42"
             />
@@ -104,6 +106,7 @@ export function FootballSection() {
               home={44}
               draw={26}
               away={30}
+              favorite="home"
               outcome="draw"
               className="w-full max-w-42"
             />
@@ -111,6 +114,7 @@ export function FootballSection() {
               home={38}
               draw={27}
               away={35}
+              favorite="home"
               dimmed
               className="w-full max-w-42"
             />
@@ -118,6 +122,7 @@ export function FootballSection() {
               home={46}
               draw={25}
               away={29}
+              favorite="home"
               outcome="home"
               size="sm"
               className="w-full max-w-21"

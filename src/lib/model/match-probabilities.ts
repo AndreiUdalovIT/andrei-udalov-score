@@ -1,5 +1,6 @@
 import type { Outcome } from '@/lib/types/football';
 
+import { roundOutcomePercentages } from './outcome-percentages';
 import { poissonProbability } from './poisson';
 import type { PoissonDistributionOptions } from './poisson-distribution';
 import {
@@ -15,6 +16,7 @@ export type MostLikelyScore = {
 
 export type MatchProbabilities = ScoreDistribution & {
   outcomes: Readonly<Record<Outcome, number>>;
+  percentages: Readonly<Record<Outcome, number>>;
   over25: number;
   bothTeamsToScore: number;
   topScores: readonly MostLikelyScore[];
@@ -116,13 +118,15 @@ export function calculateMatchProbabilities(
     }
   }
 
+  const outcomes = {
+    home: Math.min(1, sums.home.value),
+    draw: Math.min(1, sums.draw.value),
+    away: Math.min(1, sums.away.value),
+  };
   return {
     ...distribution,
-    outcomes: {
-      home: Math.min(1, sums.home.value),
-      draw: Math.min(1, sums.draw.value),
-      away: Math.min(1, sums.away.value),
-    },
+    outcomes,
+    percentages: roundOutcomePercentages(outcomes),
     over25: Math.min(1, sums.over25.value),
     bothTeamsToScore: Math.min(1, sums.bothTeamsToScore.value),
     topScores: mostLikelyScores(homeRate, awayRate),

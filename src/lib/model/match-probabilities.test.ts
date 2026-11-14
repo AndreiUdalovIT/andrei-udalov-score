@@ -10,6 +10,7 @@ describe('match probabilities from independent Poisson scores', () => {
       probabilities: [[1]],
       tailUpperBound: 0,
       outcomes: { home: 0, draw: 1, away: 0 },
+      percentages: { home: 0, draw: 100, away: 0 },
       over25: 0,
       bothTeamsToScore: 0,
       topScores: [{ homeGoals: 0, awayGoals: 0, probability: 1 }],
@@ -19,6 +20,7 @@ describe('match probabilities from independent Poisson scores', () => {
   it('matches independent 100-digit references for all five markets', () => {
     const result = calculateMatchProbabilities(1.5, 0.8, options);
 
+    expect(result!.percentages).toEqual({ home: 54, draw: 26, away: 20 });
     expect(result!.outcomes.home).toBeCloseTo(0.5381655979967927, 13);
     expect(result!.outcomes.draw).toBeCloseTo(0.26185391289739517, 13);
     expect(result!.outcomes.away).toBeCloseTo(0.1999804891058121, 13);

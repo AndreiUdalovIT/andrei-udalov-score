@@ -1,7 +1,9 @@
 // Database schema. Drizzle builds both the TypeScript types and the SQL
 // migrations from this file. Where football-data.org has an id, it is the
 // primary key: upserts need no lookups, and `/teams/57` is the row with id 57.
+import { sql } from 'drizzle-orm';
 import {
+  check,
   date,
   index,
   integer,
@@ -10,8 +12,13 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 
+import type { ExpectedGoals } from '@/lib/model/expected-goals';
+import type { MatchProbabilities } from '@/lib/model/match-probabilities';
+import type { PoissonDistributionOptions } from '@/lib/model/poisson-distribution';
+import type { PromotionAdjustmentOptions } from '@/lib/model/promotion-adjustment';
 import type { MatchDuration, MatchStatus } from '@/lib/types/football';
 
 export const competitions = pgTable('competitions', {
@@ -85,6 +92,92 @@ export const matches = pgTable(
     index('matches_competition_date_idx').on(t.competitionId, t.utcDate),
     index('matches_home_team_idx').on(t.homeTeamId),
     index('matches_away_team_idx').on(t.awayTeamId),
+  ],
+);
+
+export type PredictionSource = 'published' | 'backtest';
+
+/** Stored results with their fixture snapshot and model settings. */
+export const predictions = pgTable(
+  'predictions',
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    matchId: integer()
+      .notNull()
+      .references(() => matches.id),
+    source: text().$type<PredictionSource>().notNull(),
+    modelVersion: text().notNull(),
+    homeTeamId: integer()
+      .notNull()
+      .references(() => teams.id),
+    awayTeamId: integer()
+      .notNull()
+      .references(() => teams.id),
+    kickoffAt: timestamp({ withTimezone: true }).notNull(),
+    dataCutoff: timestamp({ withTimezone: true }).notNull(),
+    calculatedAt: timestamp({ withTimezone: true }).notNull(),
+    recordedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .default(sql`clock_timestamp()`),
+    /** Published forecasts use recordedAt. Backtests keep this null. */
+    publishedAt: timestamp({ withTimezone: true }),
+    expectedGoals: jsonb().$type<ExpectedGoals>().notNull(),
+    probabilities: jsonb().$type<MatchProbabilities>().notNull(),
+    modelOptions: jsonb()
+      .$type<{
+        strengths: PromotionAdjustmentOptions;
+        distribution: PoissonDistributionOptions;
+      }>()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex('predictions_fixture_cutoff_idx').on(
+      t.matchId,
+      t.source,
+      t.modelVersion,
+      t.homeTeamId,
+      t.awayTeamId,
+      t.kickoffAt,
+      t.dataCutoff,
+    ),
+    index('predictions_lookup_idx').on(
+      t.matchId,
+      t.source,
+      t.modelVersion,
+      t.dataCutoff,
+      t.recordedAt,
+      t.id,
+    ),
+    check('predictions_source_check', sql`${t.source} in ('published', 'backtest')`),
+    check('predictions_version_check', sql`btrim(${t.modelVersion}) <> ''`),
+    check('predictions_teams_check', sql`${t.homeTeamId} <> ${t.awayTeamId}`),
+    check(
+      'predictions_finite_times_check',
+      sql`isfinite(${t.kickoffAt}) and isfinite(${t.dataCutoff})
+        and isfinite(${t.calculatedAt}) and isfinite(${t.recordedAt})`,
+    ),
+    check(
+      'predictions_timing_check',
+      sql`${t.dataCutoff} <= ${t.calculatedAt}
+        and ${t.calculatedAt} <= ${t.recordedAt}
+        and ${t.dataCutoff} <= ${t.kickoffAt}`,
+    ),
+    check(
+      'predictions_publication_check',
+      sql`(
+        ${t.source} = 'published' and ${t.publishedAt} is not null
+        and ${t.publishedAt} = ${t.recordedAt}
+        and ${t.publishedAt} < ${t.kickoffAt}
+      ) or (
+        ${t.source} = 'backtest' and ${t.publishedAt} is null
+      )`,
+    ),
+    check(
+      'predictions_payload_objects_check',
+      sql`jsonb_typeof(${t.expectedGoals}) = 'object'
+        and jsonb_typeof(${t.probabilities}) = 'object'
+        and jsonb_typeof(${t.modelOptions}) = 'object'`,
+    ),
   ],
 );
 

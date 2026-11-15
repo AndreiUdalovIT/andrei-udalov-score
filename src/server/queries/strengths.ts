@@ -31,7 +31,7 @@ import { calculateRegularizedTeamStrengths } from '@/lib/model/regularized-stren
 import { footballCacheTags } from '../cache-tags';
 import { db } from '../db/client';
 import { competitions, matches, teamCompetitions } from '../db/schema';
-import { getPromotionHistory } from './promotion-history';
+import { getPromotionHistory, loadPromotionHistory } from './promotion-history';
 
 async function getCompetitionStrengthData(
   competitionCode: CompetitionCode,
@@ -46,6 +46,13 @@ async function getCompetitionStrengthData(
     footballCacheTags.season(competitionCode, season - 1),
   );
 
+  return loadCompetitionStrengthData(competitionCode, season);
+}
+
+async function loadCompetitionStrengthData(
+  competitionCode: CompetitionCode,
+  season: number,
+) {
   const config = getCompetitionSeasonConfig(competitionCode, season);
   if (!config) return null;
   const previousConfig = getCompetitionSeasonConfig(competitionCode, season - 1);
@@ -117,16 +124,17 @@ async function getCompetitionStrengthData(
 async function loadCompetitionStrengthInputs(
   competitionCode: CompetitionCode,
   season: number,
+  cacheInputs = true,
 ) {
-  const data = await getCompetitionStrengthData(competitionCode, season);
+  const data = await (cacheInputs
+    ? getCompetitionStrengthData(competitionCode, season)
+    : loadCompetitionStrengthData(competitionCode, season));
   if (data === null) return null;
 
+  const loadHistory = cacheInputs ? getPromotionHistory : loadPromotionHistory;
   const [history, calibration] =
     competitionCode === 'PL'
-      ? await Promise.all([
-          getPromotionHistory(season),
-          getPromotionHistory(season - 1),
-        ])
+      ? await Promise.all([loadHistory(season), loadHistory(season - 1)])
       : [null, null];
   return { ...data, competitionCode, season, history, calibration };
 }
@@ -262,6 +270,20 @@ export async function getCompetitionStrengths(
   options: PromotionAdjustmentOptions = strengthModelOptions[competitionCode],
 ) {
   const data = await loadCompetitionStrengthInputs(competitionCode, season);
+  return data === null ? null : calculateCompetitionStrengths(data, before, options);
+}
+
+/**
+ * Read current DB inputs directly for jobs running after synchronization.
+ * Result availability still uses the latest API update on each stored match.
+ */
+export async function loadCompetitionStrengths(
+  competitionCode: CompetitionCode,
+  season: number,
+  before: Date,
+  options: PromotionAdjustmentOptions = strengthModelOptions[competitionCode],
+) {
+  const data = await loadCompetitionStrengthInputs(competitionCode, season, false);
   return data === null ? null : calculateCompetitionStrengths(data, before, options);
 }
 

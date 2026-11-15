@@ -27,6 +27,12 @@ export async function getPromotionHistory(premierLeagueSeason: number) {
     footballCacheTags.season('ELC', championshipSeason),
   );
 
+  return loadPromotionHistory(premierLeagueSeason);
+}
+
+/** Read promotion inputs directly for synchronization and forecast jobs. */
+export async function loadPromotionHistory(premierLeagueSeason: number) {
+  const championshipSeason = premierLeagueSeason - 1;
   const premierLeagueConfig = getCompetitionSeasonConfig('PL', premierLeagueSeason);
   const championshipConfig = getCompetitionSeasonConfig('ELC', championshipSeason);
   if (!premierLeagueConfig || !championshipConfig) return null;

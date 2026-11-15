@@ -26,6 +26,8 @@ type PredictionBarProps = {
   home: number;
   draw: number;
   away: number;
+  /** Favorite selected from unrounded model probabilities. */
+  favorite: Outcome;
   /** The actual result once the match is over: adds ✓ or ✗ to the favorite. */
   outcome?: Outcome;
   /** The match has started: the prediction is history, so the bar fades. */
@@ -40,16 +42,13 @@ export function PredictionBar({
   home,
   draw,
   away,
+  favorite,
   outcome,
   dimmed = outcome !== undefined,
   size = 'md',
   className,
 }: PredictionBarProps) {
   const values: Record<Outcome, number> = { home, draw, away };
-  // On a tie the first outcome wins, so the highlight never jumps around.
-  const favorite = OUTCOMES.reduce((best, o) =>
-    values[o] > values[best] ? o : best,
-  );
   const verdict = outcome && (outcome === favorite ? 'hit' : 'miss');
   const title =
     verdict === 'hit'
@@ -65,7 +64,7 @@ export function PredictionBar({
       className={cn('flex flex-col', small ? 'gap-0.75' : 'gap-1', className)}
     >
       <span className="sr-only">
-        {`Прогноз: ${OUTCOMES.map((o) => `${SPOKEN[o]} ${values[o]}%`).join(', ')}.`}
+        {`Прогноз: ${OUTCOMES.map((o) => `${SPOKEN[o]} ${values[o]}%`).join(', ')}. Фаворит — ${SPOKEN[favorite]}.`}
         {verdict && ` ${title}.`}
       </span>
 

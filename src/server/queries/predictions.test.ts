@@ -19,7 +19,12 @@ import { calculateMatchProbabilities } from '@/lib/model/match-probabilities';
 import { MATCH_STATUSES } from '@/lib/types/football';
 
 import * as schema from '../db/schema';
-import { getMatchPrediction, loadMatchPrediction } from './predictions';
+import {
+  getMatchPrediction,
+  getMatchPredictionAssessment,
+  loadMatchPrediction,
+  loadMatchPredictionAssessment,
+} from './predictions';
 
 const databaseState = vi.hoisted(() => ({
   database: null as PgliteDatabase<typeof schema> | null,
@@ -134,6 +139,7 @@ describe('published match prediction lookup', () => {
   it('returns null when the fixture or a matching forecast is missing', async () => {
     expect(await loadMatchPrediction(100, 'poisson-v1')).toBeNull();
     expect(await loadMatchPrediction(999, 'poisson-v1')).toBeNull();
+    expect(await loadMatchPredictionAssessment(100, 'poisson-v1')).toBeNull();
   });
 
   it('prefers the latest data cutoff even when older inputs were published later', async () => {
@@ -307,11 +313,19 @@ describe('published match prediction lookup', () => {
       )
       .returning();
     expect(await loadMatchPrediction(100, 'poisson-v1')).toEqual(saved);
+    expect(await loadMatchPredictionAssessment(100, 'poisson-v1')).toEqual({
+      prediction: saved,
+      assessment: { outcome: 'home', correct: true },
+    });
     await database
       .update(schema.matches)
       .set({ homeGoals90: 0, awayGoals90: 2, lastUpdated: now })
       .where(eq(schema.matches.id, 100));
     expect(await loadMatchPrediction(100, 'poisson-v1')).toEqual(saved);
+    expect(await loadMatchPredictionAssessment(100, 'poisson-v1')).toEqual({
+      prediction: saved,
+      assessment: { outcome: 'away', correct: false },
+    });
   });
 
   it.each([
@@ -348,5 +362,141 @@ describe('published match prediction lookup', () => {
     const result = loadMatchPrediction(100, 'poisson-v1');
     await expect(result).rejects.toThrow('match prediction could not be loaded');
     await expect(result).rejects.not.toHaveProperty('cause');
+  });
+
+  it('returns a pending assessment while the match is timed', async () => {
+    await database
+      .update(schema.matches)
+      .set({ homeGoals90: 2, awayGoals90: 1 })
+      .where(eq(schema.matches.id, 100));
+    const [saved] = await database
+      .insert(schema.predictions)
+      .values(prediction())
+      .returning();
+    expect(await loadMatchPredictionAssessment(100, 'poisson-v1')).toEqual({
+      prediction: saved,
+      assessment: null,
+    });
+  });
+
+  it.each([
+    {
+      duration: 'EXTRA_TIME',
+      homeGoals: 3,
+      awayGoals: 1,
+      homePenalties: null,
+      awayPenalties: null,
+    },
+    {
+      duration: 'PENALTY_SHOOTOUT',
+      homeGoals: 5,
+      awayGoals: 6,
+      homePenalties: 4,
+      awayPenalties: 5,
+    },
+  ] as const)('assesses the 90-minute draw after $duration', async (score) => {
+    const pastKickoff = new Date(now.getTime() - 3_600_000);
+    await database
+      .update(schema.matches)
+      .set({
+        ...score,
+        status: 'FINISHED',
+        utcDate: pastKickoff,
+        homeGoals90: 1,
+        awayGoals90: 1,
+      })
+      .where(eq(schema.matches.id, 100));
+    const [saved] = await database
+      .insert(schema.predictions)
+      .values(
+        prediction({
+          kickoffAt: pastKickoff,
+          recordedAt: new Date(pastKickoff.getTime() - 60_000),
+        }),
+      )
+      .returning();
+    expect(await loadMatchPredictionAssessment(100, 'poisson-v1')).toEqual({
+      prediction: saved,
+      assessment: { outcome: 'draw', correct: false },
+    });
+  });
+
+  it.each([
+    { homeGoals90: null, awayGoals90: 1 },
+    { homeGoals90: 1, awayGoals90: null },
+  ])(
+    'waits for both 90-minute scores $homeGoals90 / $awayGoals90',
+    async (score) => {
+      const pastKickoff = new Date(now.getTime() - 3_600_000);
+      await database
+        .update(schema.matches)
+        .set({
+          ...score,
+          status: 'FINISHED',
+          utcDate: pastKickoff,
+          homeGoals: 3,
+          awayGoals: 1,
+        })
+        .where(eq(schema.matches.id, 100));
+      const [saved] = await database
+        .insert(schema.predictions)
+        .values(
+          prediction({
+            kickoffAt: pastKickoff,
+            recordedAt: new Date(pastKickoff.getTime() - 60_000),
+          }),
+        )
+        .returning();
+      expect(await loadMatchPredictionAssessment(100, 'poisson-v1')).toEqual({
+        prediction: saved,
+        assessment: null,
+      });
+    },
+  );
+
+  it('assesses the stored raw favorite when displayed probabilities tie', async () => {
+    const probabilities = calculateMatchProbabilities(1.5, 1.501, {
+      tailTolerance: 1e-10,
+      maxGoals: 64,
+    })!;
+    const pastKickoff = new Date(now.getTime() - 3_600_000);
+    await database
+      .update(schema.matches)
+      .set({
+        status: 'FINISHED',
+        utcDate: pastKickoff,
+        homeGoals90: 0,
+        awayGoals90: 1,
+      })
+      .where(eq(schema.matches.id, 100));
+    const [saved] = await database
+      .insert(schema.predictions)
+      .values(
+        prediction({
+          kickoffAt: pastKickoff,
+          recordedAt: new Date(pastKickoff.getTime() - 60_000),
+          expectedGoals: { home: 1.5, away: 1.501, lowData: false },
+          probabilities,
+        }),
+      )
+      .returning();
+    expect(probabilities.percentages.home).toBe(probabilities.percentages.away);
+    expect(await loadMatchPredictionAssessment(100, 'poisson-v1')).toEqual({
+      prediction: saved,
+      assessment: { outcome: 'away', correct: true },
+    });
+  });
+
+  it('registers cache lifetime and tag for the assessment entry point', async () => {
+    const [saved] = await database
+      .insert(schema.predictions)
+      .values(prediction())
+      .returning();
+    expect(await getMatchPredictionAssessment(100, 'poisson-v1')).toEqual({
+      prediction: saved,
+      assessment: null,
+    });
+    expect(cacheLife).toHaveBeenCalledExactlyOnceWith('minutes');
+    expect(cacheTag).toHaveBeenCalledExactlyOnceWith('football:matches');
   });
 });

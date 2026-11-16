@@ -4,6 +4,8 @@ import { and, desc, eq, getTableColumns, inArray, lte, sql } from 'drizzle-orm';
 import { cacheLife, cacheTag } from 'next/cache';
 import { z } from 'zod';
 
+import { assessPredictionResult } from '@/lib/model/prediction-result';
+
 import { footballCacheTags } from '../cache-tags';
 import { db } from '../db/client';
 import { matches, predictions } from '../db/schema';
@@ -21,20 +23,49 @@ export async function getMatchPrediction(matchId: number, modelVersion: string) 
   return loadMatchPrediction(matchId, modelVersion);
 }
 
+export async function getMatchPredictionAssessment(
+  matchId: number,
+  modelVersion: string,
+) {
+  'use cache';
+
+  cacheLife('minutes');
+  cacheTag(footballCacheTags.matches);
+  return loadMatchPredictionAssessment(matchId, modelVersion);
+}
+
+export async function loadMatchPrediction(matchId: number, modelVersion: string) {
+  const result = await loadMatchPredictionAssessment(matchId, modelVersion);
+  return result?.prediction ?? null;
+}
+
 /**
  * Read published forecasts for the current participants and exact kickoff.
  * Prefer the newest input cutoff, then database receipt time and row ID.
  * The database clock limits visibility to publications already received.
+ * The forecast and current 90-minute result share one SQL snapshot.
  */
-export async function loadMatchPrediction(matchId: number, modelVersion: string) {
+export async function loadMatchPredictionAssessment(
+  matchId: number,
+  modelVersion: string,
+) {
   const input = predictionLookupSchema.safeParse({ matchId, modelVersion });
   if (!input.success) {
     throw new RangeError('invalid prediction lookup');
   }
 
   try {
-    const [prediction] = await db
-      .select(getTableColumns(predictions))
+    const [snapshot] = await db
+      .select({
+        prediction: getTableColumns(predictions),
+        match: {
+          status: matches.status,
+          homeTeamId: matches.homeTeamId,
+          awayTeamId: matches.awayTeamId,
+          homeGoals90: matches.homeGoals90,
+          awayGoals90: matches.awayGoals90,
+        },
+      })
       .from(predictions)
       .innerJoin(matches, eq(predictions.matchId, matches.id))
       .where(
@@ -65,7 +96,14 @@ export async function loadMatchPrediction(matchId: number, modelVersion: string)
       )
       .limit(1);
 
-    return prediction ?? null;
+    if (snapshot === undefined) return null;
+    return {
+      prediction: snapshot.prediction,
+      assessment: assessPredictionResult(
+        snapshot.match,
+        snapshot.prediction.probabilities.favorite,
+      ),
+    };
   } catch {
     // Driver errors may contain connection details or query parameters.
     throw new Error('match prediction could not be loaded');

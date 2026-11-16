@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { publishSyncedPredictions } from '../predictions/upcoming';
 import { syncLightCompetitions } from './light';
 import type { syncCompetitionMatches } from './matches';
 import type { syncCompetitionScorers } from './scorers';
@@ -7,6 +8,7 @@ import type { syncCompetitionStandings } from './standings';
 import type { syncCompetitionTeams } from './teams';
 
 const mocks = vi.hoisted(() => ({
+  publishSyncedPredictions: vi.fn<typeof publishSyncedPredictions>(),
   syncCompetitionTeams: vi.fn<typeof syncCompetitionTeams>(),
   syncCompetitionMatches: vi.fn<typeof syncCompetitionMatches>(),
   syncCompetitionStandings: vi.fn<typeof syncCompetitionStandings>(),
@@ -14,6 +16,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('server-only', () => ({}));
+vi.mock('../predictions/upcoming', () => ({
+  publishSyncedPredictions: mocks.publishSyncedPredictions,
+}));
 vi.mock('./teams', () => ({
   syncCompetitionTeams: mocks.syncCompetitionTeams,
 }));
@@ -35,6 +40,7 @@ const premierLeague = {
 };
 
 beforeEach(() => {
+  mocks.publishSyncedPredictions.mockReset().mockResolvedValue(undefined);
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2027-01-01T00:30:00+09:00'));
   mocks.syncCompetitionTeams.mockReset().mockResolvedValue(premierLeague);
@@ -79,6 +85,7 @@ describe('light competition sync', () => {
     };
 
     const result = syncLightCompetitions([' pl ', 'CL', 'PL'], options);
+    expect(mocks.publishSyncedPredictions).not.toHaveBeenCalled();
     expect(mocks.syncCompetitionMatches).not.toHaveBeenCalled();
     expect(mocks.syncCompetitionStandings).not.toHaveBeenCalled();
     expect(mocks.syncCompetitionScorers).not.toHaveBeenCalled();
@@ -107,6 +114,16 @@ describe('light competition sync', () => {
         },
       ],
     });
+    expect(mocks.publishSyncedPredictions).toHaveBeenCalledExactlyOnceWith(
+      [
+        expect.objectContaining({ competitionCode: 'PL', season: 2026 }),
+        expect.objectContaining({ competitionCode: 'CL', season: 2025 }),
+      ],
+      { signal: options.signal },
+    );
+    expect(
+      mocks.publishSyncedPredictions.mock.invocationCallOrder[0],
+    ).toBeGreaterThan(mocks.syncCompetitionScorers.mock.invocationCallOrder.at(-1)!);
     expect(mocks.syncCompetitionTeams).toHaveBeenCalledTimes(2);
     expect(mocks.syncCompetitionTeams).toHaveBeenNthCalledWith(1, 'PL', options);
     expect(mocks.syncCompetitionTeams).toHaveBeenNthCalledWith(2, 'CL', options);
@@ -167,5 +184,48 @@ describe('light competition sync', () => {
     expect(mocks.syncCompetitionTeams).toHaveBeenCalledOnce();
     expect(mocks.syncCompetitionMatches).toHaveBeenCalledOnce();
     expect(mocks.syncCompetitionScorers).not.toHaveBeenCalled();
+    expect(mocks.publishSyncedPredictions).not.toHaveBeenCalled();
+  });
+
+  it('waits for ELC to finish before publishing PL forecasts', async () => {
+    mocks.syncCompetitionTeams
+      .mockResolvedValueOnce(premierLeague)
+      .mockResolvedValueOnce({
+        ...premierLeague,
+        competitionCode: 'ELC',
+      });
+    const pending =
+      Promise.withResolvers<Awaited<ReturnType<typeof syncCompetitionScorers>>>();
+    const loadingELC = Promise.withResolvers<void>();
+    mocks.syncCompetitionScorers
+      .mockResolvedValueOnce({
+        competitionCode: 'PL',
+        season: 2026,
+        rowCount: 2,
+      })
+      .mockImplementationOnce(() => {
+        loadingELC.resolve();
+        return pending.promise;
+      });
+    const result = syncLightCompetitions(['PL', 'ELC']);
+    await loadingELC.promise;
+    expect(mocks.publishSyncedPredictions).not.toHaveBeenCalled();
+    pending.resolve({ competitionCode: 'ELC', season: 2026, rowCount: 2 });
+    await result;
+    expect(mocks.publishSyncedPredictions).toHaveBeenCalledExactlyOnceWith(
+      [
+        expect.objectContaining({ competitionCode: 'PL', season: 2026 }),
+        expect.objectContaining({ competitionCode: 'ELC', season: 2026 }),
+      ],
+      { signal: undefined },
+    );
+  });
+
+  it('propagates publication failure after completing all datasets', async () => {
+    const error = new Error('prediction publication failed');
+    mocks.publishSyncedPredictions.mockRejectedValueOnce(error);
+    await expect(syncLightCompetitions(['PL'])).rejects.toBe(error);
+    expect(mocks.syncCompetitionScorers).toHaveBeenCalledOnce();
+    expect(mocks.publishSyncedPredictions).toHaveBeenCalledOnce();
   });
 });

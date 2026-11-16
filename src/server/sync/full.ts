@@ -2,6 +2,8 @@ import 'server-only';
 
 import type { ClientOptions } from '@/lib/football-data/client';
 
+import { publishSyncedPredictions } from '../predictions/upcoming';
+
 import { parseCompetitionOptions } from './command-options';
 import { syncCompetitionMatches } from './matches';
 import { syncCompetitionScorers } from './scorers';
@@ -61,6 +63,8 @@ export async function syncFullCompetitions(
   for (const teamId of teamIds) {
     await syncTeamSquad(teamId, { signal, requestCounter });
   }
+
+  await publishSyncedPredictions(competitions, { signal });
 
   return { competitions, squadCount: teamIds.size };
 }

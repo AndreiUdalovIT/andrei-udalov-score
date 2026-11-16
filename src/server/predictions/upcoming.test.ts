@@ -2,13 +2,22 @@ import { PGlite } from '@electric-sql/pglite';
 import { eq, inArray, type SQL } from 'drizzle-orm';
 import { drizzle, type PgliteDatabase } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 
 import { strengthModelOptions } from '@/lib/config/model-strengths';
 import { MATCH_STATUSES } from '@/lib/types/football';
 
 import * as schema from '../db/schema';
-import { publishUpcomingPredictions } from './upcoming';
+import { publishSyncedPredictions, publishUpcomingPredictions } from './upcoming';
 
 const databaseState = vi.hoisted(() => ({
   database: null as PgliteDatabase<typeof schema> | null,
@@ -83,6 +92,8 @@ afterAll(async () => {
   await client?.close();
 });
 
+afterEach(() => vi.useRealTimers());
+
 beforeEach(async () => {
   databaseState.failReads = false;
   databaseState.beforeBatch = undefined;
@@ -95,7 +106,7 @@ beforeEach(async () => {
     TRUNCATE competitions, teams RESTART IDENTITY CASCADE;
     INSERT INTO competitions (id, code, name) VALUES
       (2014, 'PD', 'La Liga'), (2021, 'PL', 'Premier League'),
-      (2001, 'CL', 'Champions League');
+      (2001, 'CL', 'Champions League'), (2016, 'ELC', 'Championship');
     INSERT INTO teams (id, name, short_name, tla) VALUES
       (1, 'One', 'One', 'ONE'), (2, 'Two', 'Two', 'TWO'),
       (3, 'Three', 'Three', 'THR'), (4, 'Four', 'Four', 'FOU');
@@ -214,7 +225,7 @@ describe('upcoming prediction publication', () => {
     });
   });
 
-  it('uses CL strength settings and main-stage history for a knockout fixture', async () => {
+  it('shares one cutoff across synced site competitions and uses CL strength settings', async () => {
     await database.insert(schema.teamCompetitions).values([
       { competitionId: 2001, season: 2026, teamId: 1 },
       { competitionId: 2001, season: 2026, teamId: 2 },
@@ -235,12 +246,25 @@ describe('upcoming prediction publication', () => {
       ),
       fixture(2000, { competitionId: 2001, stage: 'LAST_16' }),
     ]);
-    expect(await publishUpcomingPredictions('CL', 2026, window)).toEqual({
-      fixtureCount: 1,
-      publishedCount: 1,
-      skippedCount: 0,
-    });
-    const [row] = await database.select().from(schema.predictions);
+    const cutoff = new Date(Date.now() - 1000);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(cutoff);
+    databaseState.beforeExecute = () => {
+      vi.setSystemTime(new Date(cutoff.getTime() + 1));
+    };
+
+    await publishSyncedPredictions([
+      { competitionCode: 'PD', season: 2026 },
+      { competitionCode: 'CL', season: 2026 },
+    ]);
+    const rows = await database.select().from(schema.predictions);
+    expect(rows).toHaveLength(3);
+    expect(
+      rows.every(
+        (prediction) => prediction.dataCutoff.getTime() === cutoff.getTime(),
+      ),
+    ).toBe(true);
+    const row = rows.find((prediction) => prediction.matchId === 2000);
     expect(row?.modelOptions.strengths).toEqual(strengthModelOptions.CL);
     expect(row?.expectedGoals.lowData).toBe(false);
   });
@@ -439,5 +463,70 @@ describe('upcoming prediction publication', () => {
     await expect(publishUpcomingPredictions('PD', 2026, window)).rejects.toThrow(
       'competition strength data could not be loaded',
     );
+  });
+
+  it('publishes the next seven days with both window boundaries excluded', async () => {
+    const cutoff = new Date(window.dataCutoff.getTime());
+    const until = cutoff.getTime() + 7 * 86_400_000;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(cutoff);
+    await database
+      .insert(schema.matches)
+      .values([
+        fixture(300, { utcDate: cutoff }),
+        fixture(301, { utcDate: new Date(until - 1) }),
+        fixture(302, { utcDate: new Date(until) }),
+        fixture(303, { utcDate: new Date(until + 1) }),
+      ]);
+    await publishSyncedPredictions([{ competitionCode: 'PD', season: 2026 }]);
+    const rows = await database.select().from(schema.predictions);
+    expect(rows.map((row) => row.matchId).sort((a, b) => a - b)).toEqual([
+      10, 11, 301,
+    ]);
+    expect(rows.every((row) => row.dataCutoff.getTime() === cutoff.getTime())).toBe(
+      true,
+    );
+  });
+
+  it('selects site competitions when ELC has eligible fixtures', async () => {
+    await database.insert(schema.teamCompetitions).values([
+      { competitionId: 2016, season: 2025, teamId: 1 },
+      { competitionId: 2016, season: 2025, teamId: 2 },
+      { competitionId: 2016, season: 2026, teamId: 1 },
+      { competitionId: 2016, season: 2026, teamId: 2 },
+    ]);
+    const source = await database
+      .select()
+      .from(schema.matches)
+      .where(inArray(schema.matches.id, [10, 100, 101]));
+    await database.insert(schema.matches).values(
+      source.map((match, index) => ({
+        ...match,
+        id: 4000 + index,
+        competitionId: 2016,
+      })),
+    );
+    await publishSyncedPredictions([
+      { competitionCode: 'PD', season: 2026 },
+      { competitionCode: 'ELC', season: 2026 },
+    ]);
+    expect(await database.select().from(schema.predictions)).toHaveLength(2);
+    expect(await publishUpcomingPredictions('ELC', 2026, window)).toEqual({
+      fixtureCount: 1,
+      publishedCount: 1,
+      skippedCount: 0,
+    });
+  });
+
+  it('forwards cancellation through the synced publication batch', async () => {
+    const controller = new AbortController();
+    const reason = new Error('cancelled');
+    databaseState.beforeExecute = () => controller.abort(reason);
+    await expect(
+      publishSyncedPredictions([{ competitionCode: 'PD', season: 2026 }], {
+        signal: controller.signal,
+      }),
+    ).rejects.toBe(reason);
+    expect(await database.select().from(schema.predictions)).toHaveLength(1);
   });
 });

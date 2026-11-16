@@ -2,7 +2,10 @@ import 'server-only';
 
 import { and, asc, eq, gt, inArray, lt, ne } from 'drizzle-orm';
 
-import type { CompetitionCode } from '@/lib/config/competitions';
+import {
+  siteCompetitionCodes,
+  type CompetitionCode,
+} from '@/lib/config/competitions';
 import { predictionModelConfig } from '@/lib/config/model-predictions';
 import { strengthModelOptions } from '@/lib/config/model-strengths';
 import { calculateExpectedGoals } from '@/lib/model/expected-goals';
@@ -126,4 +129,28 @@ export async function publishUpcomingPredictions(
     publishedCount,
     skippedCount: fixtures.length - publishedCount,
   };
+}
+
+/** Publish the next seven days after all selected datasets have been saved. */
+export async function publishSyncedPredictions(
+  syncedCompetitions: readonly { competitionCode: string; season: number }[],
+  { signal }: { signal?: AbortSignal } = {},
+): Promise<void> {
+  signal?.throwIfAborted();
+  const dataCutoff = new Date();
+  const until = new Date(dataCutoff.getTime() + 7 * 86_400_000);
+  for (const competition of syncedCompetitions) {
+    signal?.throwIfAborted();
+    const code = siteCompetitionCodes.find(
+      (candidate) => candidate === competition.competitionCode,
+    );
+    if (code === undefined) continue;
+
+    await publishUpcomingPredictions(code, competition.season, {
+      dataCutoff,
+      until,
+      signal,
+    });
+  }
+  signal?.throwIfAborted();
 }

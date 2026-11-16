@@ -6,7 +6,10 @@ import { cacheLife, cacheTag } from 'next/cache';
 import { getCompetitionSeasonConfig } from '@/lib/config/competition-seasons';
 import type { CompetitionCode } from '@/lib/config/competitions';
 import { strengthModelOptions } from '@/lib/config/model-strengths';
-import { calculateExpectedGoals } from '@/lib/model/expected-goals';
+import {
+  calculateExpectedGoals,
+  type ExpectedGoals,
+} from '@/lib/model/expected-goals';
 import {
   compareGoalForecasts,
   type GoalForecastCandidate,
@@ -21,6 +24,7 @@ import {
   selectTrainingMatches,
   type ModelMatch,
 } from '@/lib/model/matches';
+import { isPrematchFixture } from '@/lib/model/prediction-eligibility';
 import { calculatePromotedTeamStrengths } from '@/lib/model/promoted-strengths';
 import {
   estimatePromotionAdjustment,
@@ -361,23 +365,11 @@ export async function loadCompetitionStrengths(
   return data === null ? null : calculateCompetitionStrengths(data, before, options);
 }
 
-/**
- * Rebuild strengths from the states observed strictly before the cutoff.
- * Observed fixtures define participants and recorded receipt times define
- * result availability. One SQL snapshot covers the competition and PL/ELC
- * promotion cohorts. Season configuration scopes each training main stage.
- */
-export async function loadObservedCompetitionStrengths(
+async function loadObservedStrengthInputs(
   competitionCode: CompetitionCode,
   season: number,
-  before: Date,
-  options: PromotionAdjustmentOptions = strengthModelOptions[competitionCode],
+  cutoff: Date,
 ) {
-  const cutoff = new Date(before.getTime());
-  if (!Number.isFinite(cutoff.getTime())) {
-    throw new RangeError('before must be a valid date');
-  }
-  const settings = { ...options };
   const config = getCompetitionSeasonConfig(competitionCode, season);
   if (!config) return null;
 
@@ -409,21 +401,40 @@ export async function loadObservedCompetitionStrengths(
     season,
     config.mainStage,
   );
-  return calculateCompetitionStrengths(
-    {
-      ...data,
-      competitionCode,
-      season,
-      history: includePromotion
-        ? selectObservedPromotionHistory(records, season)
-        : null,
-      calibration: includePromotion
-        ? selectObservedPromotionHistory(records, season - 1)
-        : null,
-    },
-    cutoff,
-    settings,
-  );
+  return {
+    ...data,
+    competitionCode,
+    season,
+    history: includePromotion
+      ? selectObservedPromotionHistory(records, season)
+      : null,
+    calibration: includePromotion
+      ? selectObservedPromotionHistory(records, season - 1)
+      : null,
+  };
+}
+
+/**
+ * Rebuild strengths from the states observed strictly before the cutoff.
+ * Observed fixtures define participants and recorded receipt times define
+ * result availability. One SQL snapshot covers the competition and PL/ELC
+ * promotion cohorts. Season configuration scopes each training main stage.
+ */
+export async function loadObservedCompetitionStrengths(
+  competitionCode: CompetitionCode,
+  season: number,
+  before: Date,
+  options: PromotionAdjustmentOptions = strengthModelOptions[competitionCode],
+) {
+  const cutoff = new Date(before.getTime());
+  if (!Number.isFinite(cutoff.getTime())) {
+    throw new RangeError('before must be a valid date');
+  }
+  const settings = { ...options };
+  const data = await loadObservedStrengthInputs(competitionCode, season, cutoff);
+  return data === null
+    ? null
+    : calculateCompetitionStrengths(data, cutoff, settings);
 }
 
 export type StrengthValidationCandidate = {
@@ -431,42 +442,13 @@ export type StrengthValidationCandidate = {
   options: PromotionAdjustmentOptions;
 };
 
-/**
- * Compare a season's main-stage forecasts using one set of loaded DB inputs.
- * Each fixture uses its kickoff as the exclusive training cutoff.
- * Reconstructed training availability assumes final scores after 24 hours.
- * Validation outcomes use the API update cutoff in either mode.
- * Earlier result revisions require separately captured versions.
- * The caller selects tuning and final evaluation periods separately.
- */
-export async function getCompetitionStrengthValidation(
+async function loadCurrentStrengthForecasts(
   competitionCode: CompetitionCode,
   season: number,
-  window: GoalValidationWindow,
-  candidates: readonly StrengthValidationCandidate[],
-  availability: 'api-update' | 'reconstructed' = 'api-update',
+  period: GoalValidationWindow,
+  settings: readonly StrengthValidationCandidate[],
+  availability: 'api-update' | 'reconstructed',
 ) {
-  if (availability !== 'api-update' && availability !== 'reconstructed') {
-    throw new RangeError('unsupported result availability mode');
-  }
-  if (candidates.length === 0) {
-    throw new RangeError('at least one strength validation candidate is required');
-  }
-  if (
-    new Set(candidates.map((candidate) => candidate.id)).size !== candidates.length
-  ) {
-    throw new RangeError('forecast candidate IDs must be unique');
-  }
-
-  const settings = candidates.map(({ id, options }) => ({
-    id,
-    options: { ...options },
-  }));
-  const period = {
-    from: new Date(window.from.getTime()),
-    until: new Date(window.until.getTime()),
-    resultsBefore: new Date(window.resultsBefore.getTime()),
-  };
   const source = await loadCompetitionStrengthInputs(competitionCode, season);
   if (source === null) return null;
   const data =
@@ -503,11 +485,139 @@ export async function getCompetitionStrengthValidation(
     forecasts.push({ id: candidate.id, rows });
   }
 
-  const comparison = compareGoalForecasts(forecasts);
+  return { previousSeason: data.previousSeason, forecasts };
+}
+
+async function loadObservedStrengthForecasts(
+  competitionCode: CompetitionCode,
+  season: number,
+  period: GoalValidationWindow,
+  settings: readonly StrengthValidationCandidate[],
+) {
+  const source = await loadObservedStrengthInputs(
+    competitionCode,
+    season,
+    period.resultsBefore,
+  );
+  if (source === null) return null;
+
+  const predictionsByMatch = new Map<number, readonly (ExpectedGoals | null)[]>();
+  let inputCutoff: number | undefined;
+  let currentInputs: CompetitionStrengthInputs | null = null;
+  const forecasts: GoalForecastCandidate[] = [];
+  for (const [index, candidate] of settings.entries()) {
+    const rows = await buildWalkForwardGoalForecasts(
+      source.currentMatches,
+      period,
+      async ({ id, homeTeamId, awayTeamId, before }) => {
+        let predictions = predictionsByMatch.get(id);
+        if (predictions === undefined) {
+          if (inputCutoff !== before.getTime()) {
+            currentInputs = await loadObservedStrengthInputs(
+              competitionCode,
+              season,
+              before,
+            );
+            inputCutoff = before.getTime();
+          }
+          const data = currentInputs;
+          const fixture = data?.currentMatches.find((match) => match.id === id);
+          predictions = settings.map(() => null);
+          if (
+            data !== null &&
+            fixture !== undefined &&
+            isPrematchFixture(fixture) &&
+            fixture.utcDate.getTime() === before.getTime() &&
+            fixture.homeTeamId === homeTeamId &&
+            fixture.awayTeamId === awayTeamId
+          ) {
+            predictions = settings.map(({ options }) => {
+              const strengths = calculateCompetitionStrengths(data, before, options);
+              const home = strengths.teams.find(
+                (team) => team.teamId === homeTeamId,
+              );
+              const away = strengths.teams.find(
+                (team) => team.teamId === awayTeamId,
+              );
+              return calculateExpectedGoals(
+                strengths.league,
+                home?.home ?? null,
+                away?.away ?? null,
+              );
+            });
+          }
+          predictionsByMatch.set(id, predictions);
+        }
+        return predictions[index] ?? null;
+      },
+    );
+    forecasts.push({ id: candidate.id, rows });
+  }
+  return { previousSeason: source.previousSeason, forecasts };
+}
+
+/**
+ * Compare a season's main-stage forecasts with exclusive kickoff cutoffs.
+ * Observed mode replays captured states and requires a known prematch fixture.
+ * Its candidates share one input snapshot per kickoff and observed outcomes.
+ * API and reconstructed modes use current DB records for validation outcomes.
+ * Reconstructed training availability assumes final scores after 24 hours.
+ * The caller selects tuning and final evaluation periods separately.
+ */
+export async function getCompetitionStrengthValidation(
+  competitionCode: CompetitionCode,
+  season: number,
+  window: GoalValidationWindow,
+  candidates: readonly StrengthValidationCandidate[],
+  availability: 'api-update' | 'reconstructed' | 'observed' = 'api-update',
+) {
+  if (
+    availability !== 'api-update' &&
+    availability !== 'reconstructed' &&
+    availability !== 'observed'
+  ) {
+    throw new RangeError('unsupported result availability mode');
+  }
+  if (candidates.length === 0) {
+    throw new RangeError('at least one strength validation candidate is required');
+  }
+  if (
+    new Set(candidates.map((candidate) => candidate.id)).size !== candidates.length
+  ) {
+    throw new RangeError('forecast candidate IDs must be unique');
+  }
+
+  const settings = candidates.map(({ id, options }) => ({
+    id,
+    options: { ...options },
+  }));
+  const period = {
+    from: new Date(window.from.getTime()),
+    until: new Date(window.until.getTime()),
+    resultsBefore: new Date(window.resultsBefore.getTime()),
+  };
+  const source =
+    availability === 'observed'
+      ? await loadObservedStrengthForecasts(
+          competitionCode,
+          season,
+          period,
+          settings,
+        )
+      : await loadCurrentStrengthForecasts(
+          competitionCode,
+          season,
+          period,
+          settings,
+          availability,
+        );
+  if (source === null) return null;
+
+  const comparison = compareGoalForecasts(source.forecasts);
   return {
     competitionCode,
     season,
-    previousSeason: data.previousSeason,
+    previousSeason: source.previousSeason,
     window: period,
     resultAvailability: {
       mode: availability,

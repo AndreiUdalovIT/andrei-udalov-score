@@ -280,6 +280,9 @@ describe('upcoming prediction publication', () => {
 
   it('skips forecasts when the training sample is empty', async () => {
     await database
+      .delete(schema.matchObservations)
+      .where(inArray(schema.matchObservations.matchId, [100, 101]));
+    await database
       .delete(schema.matches)
       .where(inArray(schema.matches.id, [100, 101]));
     expect(await publishUpcomingPredictions('PD', 2026, window)).toEqual({
@@ -303,6 +306,9 @@ describe('upcoming prediction publication', () => {
   });
 
   it('returns an empty summary before loading strengths when no fixtures qualify', async () => {
+    await database
+      .delete(schema.matchObservations)
+      .where(inArray(schema.matchObservations.matchId, [10, 11]));
     await database
       .delete(schema.matches)
       .where(inArray(schema.matches.id, [10, 11]));

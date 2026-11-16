@@ -171,6 +171,9 @@ describe('prediction publication', () => {
 
   it('skips a removed fixture', async () => {
     databaseState.beforeExecute = async () => {
+      await database
+        .delete(schema.matchObservations)
+        .where(eq(schema.matchObservations.matchId, 100));
       await database.delete(schema.matches).where(eq(schema.matches.id, 100));
     };
     expect(await publishPrediction(input)).toBeNull();

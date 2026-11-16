@@ -7,7 +7,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { MATCH_STATUSES } from '@/lib/types/football';
 
 import * as schema from '../db/schema';
-import { loadCompetitionMatchObservations } from './match-observations';
+import {
+  loadCompetitionMatchObservations,
+  loadMatchObservations,
+} from './match-observations';
 
 const state = vi.hoisted(() => ({
   database: null as PgliteDatabase<typeof schema> | null,
@@ -492,6 +495,80 @@ describe('observed competition match lookup', () => {
     );
     await expect(result).rejects.not.toHaveProperty('cause');
   });
+
+  it('loads PL and ELC observations together in one SQL statement', async () => {
+    const saved = await database
+      .insert(schema.matchObservations)
+      .values([
+        observation(),
+        observation({ matchId: 101, competitionId: 2016, season: 2025 }),
+        observation({ matchId: 102, competitionId: 2001 }),
+      ])
+      .returning();
+    state.queryCount = 0;
+    expect(await loadMatchObservations(['PL', 'ELC'], [2025, 2026], before)).toEqual(
+      [
+        { competitionCode: 'PL', observation: saved[0] },
+        { competitionCode: 'ELC', observation: saved[1] },
+      ],
+    );
+    expect(state.queryCount).toBe(1);
+  });
+
+  it('returns the latest competition when a match moves within the requested set', async () => {
+    const saved = await database
+      .insert(schema.matchObservations)
+      .values([
+        observation(),
+        observation({
+          competitionId: 2016,
+          observedAt: new Date('2026-11-08T12:30:00Z'),
+        }),
+      ])
+      .returning();
+    expect(await loadMatchObservations(['PL', 'ELC'], [2026], before)).toEqual([
+      { competitionCode: 'ELC', observation: saved[1] },
+    ]);
+    expect(await loadCompetitionMatchObservations('PL', [2026], before)).toEqual([]);
+  });
+
+  it('returns one observation for repeated requested competition codes', async () => {
+    const saved = await database
+      .insert(schema.matchObservations)
+      .values(observation())
+      .returning();
+    expect(await loadMatchObservations(['PL', 'PL'], [2026, 2026], before)).toEqual([
+      { competitionCode: 'PL', observation: saved[0] },
+    ]);
+  });
+
+  it('captures the requested competition array before accessing the database', async () => {
+    const saved = await database
+      .insert(schema.matchObservations)
+      .values(observation())
+      .returning();
+    const codes: ('PL' | 'CL')[] = ['PL'];
+    state.beforeDatabaseAccess = () => {
+      codes.splice(0, codes.length, 'CL');
+    };
+    expect(await loadMatchObservations(codes, [2026], before)).toEqual([
+      { competitionCode: 'PL', observation: saved[0] },
+    ]);
+  });
+
+  it.each([{ codes: [] }, { codes: null }, { codes: 'PL' }, { codes: ['XYZ'] }])(
+    'rejects invalid competition collections $codes before reading',
+    async ({ codes }) => {
+      state.failReads = true;
+      await expect(
+        loadMatchObservations(
+          codes as unknown as Parameters<typeof loadMatchObservations>[0],
+          [2026],
+          before,
+        ),
+      ).rejects.toThrow(new RangeError('invalid match observation lookup'));
+    },
+  );
 
   const validDate = new Date('2026-11-08T13:00:00Z');
   const invalidLookups: [string, unknown[]][] = [

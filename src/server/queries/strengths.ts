@@ -31,6 +31,7 @@ import { calculateRegularizedTeamStrengths } from '@/lib/model/regularized-stren
 import { footballCacheTags } from '../cache-tags';
 import { db } from '../db/client';
 import { competitions, matches, teamCompetitions } from '../db/schema';
+import { loadMatchObservations } from './match-observations';
 import { getPromotionHistory, loadPromotionHistory } from './promotion-history';
 
 async function getCompetitionStrengthData(
@@ -137,6 +138,79 @@ async function loadCompetitionStrengthInputs(
       ? await Promise.all([loadHistory(season), loadHistory(season - 1)])
       : [null, null];
   return { ...data, competitionCode, season, history, calibration };
+}
+
+type ObservedStrengthMatch = ModelMatch & {
+  competitionCode: string;
+  season: number;
+  stage: string;
+};
+
+function observedTeamIds(matches: readonly ModelMatch[]) {
+  const ids = matches
+    .flatMap((match) => [match.homeTeamId, match.awayTeamId])
+    .filter((id): id is number => id !== null);
+  return [...new Set(ids)].sort((first, second) => first - second);
+}
+
+function selectObservedStrengthData(
+  records: readonly ObservedStrengthMatch[],
+  competitionCode: CompetitionCode,
+  season: number,
+  mainStage: string,
+) {
+  const current = records.filter(
+    (match) => match.competitionCode === competitionCode && match.season === season,
+  );
+  const previous = records.filter(
+    (match) =>
+      match.competitionCode === competitionCode && match.season === season - 1,
+  );
+  const previousConfig = getCompetitionSeasonConfig(competitionCode, season - 1);
+  return {
+    teamIds: observedTeamIds(current),
+    previousTeamIds: observedTeamIds(previous),
+    previousSeason: previousConfig ? season - 1 : null,
+    currentMatches: current.filter((match) => match.stage === mainStage),
+    previousMatches: previous.filter(
+      (match) => match.stage === previousConfig?.mainStage,
+    ),
+  };
+}
+
+function selectObservedPromotionHistory(
+  records: readonly ObservedStrengthMatch[],
+  premierLeagueSeason: number,
+) {
+  const championshipSeason = premierLeagueSeason - 1;
+  const premierLeagueConfig = getCompetitionSeasonConfig('PL', premierLeagueSeason);
+  const championshipConfig = getCompetitionSeasonConfig('ELC', championshipSeason);
+  if (!premierLeagueConfig || !championshipConfig) return null;
+
+  const premierLeague = selectObservedStrengthData(
+    records,
+    'PL',
+    premierLeagueSeason,
+    premierLeagueConfig.mainStage,
+  );
+  const championship = selectObservedStrengthData(
+    records,
+    'ELC',
+    championshipSeason,
+    championshipConfig.mainStage,
+  );
+  const previousTeams = new Set(premierLeague.previousTeamIds);
+  const championshipTeams = new Set(championship.teamIds);
+  return {
+    premierLeagueSeason,
+    championshipSeason,
+    previousPremierLeagueTeamIds: premierLeague.previousTeamIds,
+    promotedTeamIds: premierLeague.teamIds.filter(
+      (teamId) => championshipTeams.has(teamId) && !previousTeams.has(teamId),
+    ),
+    premierLeagueMatches: premierLeague.currentMatches,
+    championshipMatches: championship.currentMatches,
+  };
 }
 
 type CompetitionStrengthInputs = NonNullable<
@@ -285,6 +359,71 @@ export async function loadCompetitionStrengths(
 ) {
   const data = await loadCompetitionStrengthInputs(competitionCode, season, false);
   return data === null ? null : calculateCompetitionStrengths(data, before, options);
+}
+
+/**
+ * Rebuild strengths from the states observed strictly before the cutoff.
+ * Observed fixtures define participants and recorded receipt times define
+ * result availability. One SQL snapshot covers the competition and PL/ELC
+ * promotion cohorts. Season configuration scopes each training main stage.
+ */
+export async function loadObservedCompetitionStrengths(
+  competitionCode: CompetitionCode,
+  season: number,
+  before: Date,
+  options: PromotionAdjustmentOptions = strengthModelOptions[competitionCode],
+) {
+  const cutoff = new Date(before.getTime());
+  if (!Number.isFinite(cutoff.getTime())) {
+    throw new RangeError('before must be a valid date');
+  }
+  const settings = { ...options };
+  const config = getCompetitionSeasonConfig(competitionCode, season);
+  if (!config) return null;
+
+  const includePromotion = competitionCode === 'PL';
+  const rows = await loadMatchObservations(
+    includePromotion ? ['PL', 'ELC'] : [competitionCode],
+    includePromotion ? [season - 2, season - 1, season] : [season - 1, season],
+    cutoff,
+  );
+  const records: ObservedStrengthMatch[] = rows.map(
+    ({ competitionCode, observation }) => ({
+      competitionCode,
+      id: observation.matchId,
+      season: observation.season,
+      stage: observation.stage,
+      status: observation.status,
+      utcDate: observation.utcDate,
+      lastUpdated: observation.lastUpdated,
+      observedAt: observation.observedAt,
+      homeTeamId: observation.homeTeamId,
+      awayTeamId: observation.awayTeamId,
+      homeGoals90: observation.homeGoals90,
+      awayGoals90: observation.awayGoals90,
+    }),
+  );
+  const data = selectObservedStrengthData(
+    records,
+    competitionCode,
+    season,
+    config.mainStage,
+  );
+  return calculateCompetitionStrengths(
+    {
+      ...data,
+      competitionCode,
+      season,
+      history: includePromotion
+        ? selectObservedPromotionHistory(records, season)
+        : null,
+      calibration: includePromotion
+        ? selectObservedPromotionHistory(records, season - 1)
+        : null,
+    },
+    cutoff,
+    settings,
+  );
 }
 
 export type StrengthValidationCandidate = {

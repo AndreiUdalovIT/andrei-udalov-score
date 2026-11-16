@@ -96,6 +96,58 @@ describe('training match selection', () => {
     }
   });
 
+  it.each([
+    new Date(match.utcDate.getTime() - 1),
+    match.utcDate,
+    before,
+    new Date(before.getTime() + 1),
+    new Date(NaN),
+  ])('uses a recorded observation when the API update is %s', (lastUpdated) => {
+    const supplied = {
+      ...match,
+      lastUpdated,
+      observedAt: new Date('2026-11-10T21:00:00Z'),
+    };
+    expect(selectTrainingMatches([supplied], before)).toEqual([supplied]);
+    expect(
+      selectTrainingMatches([{ ...supplied, observedAt: undefined }], before),
+    ).toEqual([]);
+  });
+
+  it.each([
+    new Date(NaN),
+    match.utcDate,
+    new Date(match.utcDate.getTime() - 1),
+    before,
+    new Date(before.getTime() + 1),
+  ])('rejects an unavailable or invalid recorded observation %s', (observedAt) => {
+    expect(
+      selectTrainingMatches(
+        [{ ...match, observedAt, resultAvailableAt: match.lastUpdated }],
+        before,
+      ),
+    ).toEqual([]);
+  });
+
+  it('gives recorded receipt time priority over an explicit availability override', () => {
+    const observedAt = new Date('2026-11-10T21:00:00Z');
+    const supplied = Object.freeze({
+      ...match,
+      observedAt,
+      resultAvailableAt: new Date(before.getTime() + 1),
+    });
+    expect(selectTrainingMatches([supplied], before)).toEqual([supplied]);
+    expect(
+      selectTrainingMatches(
+        [{ ...supplied, observedAt: before, resultAvailableAt: match.lastUpdated }],
+        before,
+      ),
+    ).toEqual([]);
+    expect(
+      selectTrainingMatches(reconstructResultAvailability([supplied]), before),
+    ).toHaveLength(1);
+  });
+
   it('reconstructs availability after 24 hours while retaining API timestamps and metadata', () => {
     const laterUpdate = new Date('2026-11-20T12:00:00Z');
     const source = Object.freeze([

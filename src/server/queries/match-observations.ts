@@ -10,24 +10,34 @@ import { competitions, matchObservations } from '../db/schema';
 
 const competitionCodes = Object.keys(competitionConfig) as CompetitionCode[];
 const observationLookupSchema = z.object({
-  competitionCode: z.enum(competitionCodes),
+  competitionCodes: z.array(z.enum(competitionCodes)).min(1),
   seasons: z.array(z.int32()).min(1),
   before: z.date(),
 });
 
-/**
- * Latest observed state of each match strictly before the supplied cutoff.
- * Historical scope identifies candidates. The latest state is scoped again
- * so changes of competition or season take effect at their observation time.
- * Complete states retain status, fixture changes and score revisions.
- */
+/** Latest observed states for one competition strictly before the cutoff. */
 export async function loadCompetitionMatchObservations(
   competitionCode: CompetitionCode,
   seasons: readonly number[],
   before: Date,
 ) {
+  const rows = await loadMatchObservations([competitionCode], seasons, before);
+  return rows.map((row) => row.observation);
+}
+
+/**
+ * Read multiple competitions in one SQL snapshot for historical model inputs.
+ * Historical scope identifies candidates. The latest state is scoped again
+ * so changes of competition or season take effect at their observation time.
+ * Complete states retain status, fixture changes and score revisions.
+ */
+export async function loadMatchObservations(
+  competitionCodes: readonly CompetitionCode[],
+  seasons: readonly number[],
+  before: Date,
+) {
   const input = observationLookupSchema.safeParse({
-    competitionCode,
+    competitionCodes,
     seasons,
     before,
   });
@@ -37,26 +47,27 @@ export async function loadCompetitionMatchObservations(
   const cutoff = new Date(input.data.before.getTime());
 
   try {
-    const competitionId = db
+    const competitionIds = db
       .select({ id: competitions.id })
       .from(competitions)
-      .where(eq(competitions.code, input.data.competitionCode));
+      .where(inArray(competitions.code, input.data.competitionCodes));
     const candidates = db
       .select({ matchId: matchObservations.matchId })
       .from(matchObservations)
       .where(
         and(
-          eq(matchObservations.competitionId, competitionId),
+          inArray(matchObservations.competitionId, competitionIds),
           inArray(matchObservations.season, input.data.seasons),
           lt(matchObservations.observedAt, cutoff),
         ),
       );
     const latest = db
-      .selectDistinctOn(
-        [matchObservations.matchId],
-        getTableColumns(matchObservations),
-      )
+      .selectDistinctOn([matchObservations.matchId], {
+        competitionCode: competitions.code,
+        observation: getTableColumns(matchObservations),
+      })
       .from(matchObservations)
+      .innerJoin(competitions, eq(matchObservations.competitionId, competitions.id))
       .where(
         and(
           inArray(matchObservations.matchId, candidates),
@@ -75,11 +86,11 @@ export async function loadCompetitionMatchObservations(
       .from(latest)
       .where(
         and(
-          eq(latest.competitionId, competitionId),
-          inArray(latest.season, input.data.seasons),
+          inArray(latest.competitionCode, input.data.competitionCodes),
+          inArray(latest.observation.season, input.data.seasons),
         ),
       )
-      .orderBy(asc(latest.utcDate), asc(latest.matchId));
+      .orderBy(asc(latest.observation.utcDate), asc(latest.observation.matchId));
   } catch {
     // Driver errors may contain connection details or query parameters.
     throw new Error('competition match observations could not be loaded');

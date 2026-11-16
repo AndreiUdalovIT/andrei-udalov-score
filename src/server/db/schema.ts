@@ -95,6 +95,57 @@ export const matches = pgTable(
   ],
 );
 
+export type MatchObservationSource = 'baseline' | 'change';
+
+/** Match states captured for replaying the information observed over time. */
+export const matchObservations = pgTable(
+  'match_observations',
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    matchId: integer()
+      .notNull()
+      .references(() => matches.id),
+    competitionId: integer()
+      .notNull()
+      .references(() => competitions.id),
+    season: integer().notNull(),
+    matchday: integer(),
+    stage: text().notNull(),
+    utcDate: timestamp({ withTimezone: true }).notNull(),
+    status: text().$type<MatchStatus>().notNull(),
+    homeTeamId: integer().references(() => teams.id),
+    awayTeamId: integer().references(() => teams.id),
+    homeGoals: integer(),
+    awayGoals: integer(),
+    homeGoals90: integer(),
+    awayGoals90: integer(),
+    duration: text().$type<MatchDuration>().notNull(),
+    homePenalties: integer(),
+    awayPenalties: integer(),
+    /** API update timestamp retained with the captured state. */
+    lastUpdated: timestamp({ withTimezone: true }).notNull(),
+    /** Database receipt time of this observation. */
+    observedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .default(sql`clock_timestamp()`),
+    source: text().$type<MatchObservationSource>().notNull(),
+  },
+  (t) => [
+    index('match_observations_lookup_idx').on(t.matchId, t.observedAt, t.id),
+    index('match_observations_scope_idx').on(
+      t.competitionId,
+      t.season,
+      t.observedAt,
+      t.matchId,
+    ),
+    check(
+      'match_observations_source_check',
+      sql`${t.source} in ('baseline', 'change')`,
+    ),
+    check('match_observations_observed_at_check', sql`isfinite(${t.observedAt})`),
+  ],
+);
+
 export type PredictionSource = 'published' | 'backtest';
 
 /** Stored results with their fixture snapshot and model settings. */

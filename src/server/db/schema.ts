@@ -178,6 +178,8 @@ export const predictions = pgTable(
       .$type<{
         strengths: PromotionAdjustmentOptions;
         distribution: PoissonDistributionOptions;
+        /** Input availability recorded for observed retrospective forecasts. */
+        resultAvailability?: { mode: 'observed'; delayHours: null };
       }>()
       .notNull(),
   },

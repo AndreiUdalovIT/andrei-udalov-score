@@ -17,6 +17,7 @@ import {
 import {
   buildWalkForwardGoalForecasts,
   type GoalValidationWindow,
+  type WalkForwardGoalRow,
 } from '@/lib/model/goal-walk-forward';
 import {
   RECONSTRUCTED_RESULT_DELAY_HOURS,
@@ -437,6 +438,11 @@ export async function loadObservedCompetitionStrengths(
     : calculateCompetitionStrengths(data, cutoff, settings);
 }
 
+export type ObservedGoalForecastRow = WalkForwardGoalRow & {
+  homeTeamId: number;
+  awayTeamId: number;
+};
+
 export type StrengthValidationCandidate = {
   id: string;
   options: PromotionAdjustmentOptions;
@@ -501,17 +507,24 @@ async function loadObservedStrengthForecasts(
   );
   if (source === null) return null;
 
-  const predictionsByMatch = new Map<number, readonly (ExpectedGoals | null)[]>();
+  const predictionsByMatch = new Map<
+    number,
+    {
+      homeTeamId: number;
+      awayTeamId: number;
+      goals: readonly (ExpectedGoals | null)[];
+    }
+  >();
   let inputCutoff: number | undefined;
   let currentInputs: CompetitionStrengthInputs | null = null;
-  const forecasts: GoalForecastCandidate[] = [];
+  const forecasts: { id: string; rows: ObservedGoalForecastRow[] }[] = [];
   for (const [index, candidate] of settings.entries()) {
     const rows = await buildWalkForwardGoalForecasts(
       source.currentMatches,
       period,
       async ({ id, homeTeamId, awayTeamId, before }) => {
-        let predictions = predictionsByMatch.get(id);
-        if (predictions === undefined) {
+        let saved = predictionsByMatch.get(id);
+        if (saved === undefined) {
           if (inputCutoff !== before.getTime()) {
             currentInputs = await loadObservedStrengthInputs(
               competitionCode,
@@ -522,7 +535,7 @@ async function loadObservedStrengthForecasts(
           }
           const data = currentInputs;
           const fixture = data?.currentMatches.find((match) => match.id === id);
-          predictions = settings.map(() => null);
+          let predictions: (ExpectedGoals | null)[] = settings.map(() => null);
           if (
             data !== null &&
             fixture !== undefined &&
@@ -546,14 +559,56 @@ async function loadObservedStrengthForecasts(
               );
             });
           }
-          predictionsByMatch.set(id, predictions);
+          saved = { homeTeamId, awayTeamId, goals: predictions };
+          predictionsByMatch.set(id, saved);
         }
-        return predictions[index] ?? null;
+        return saved.goals[index] ?? null;
       },
     );
-    forecasts.push({ id: candidate.id, rows });
+    forecasts.push({
+      id: candidate.id,
+      rows: rows.map((row) => {
+        const fixture = predictionsByMatch.get(row.id)!;
+        return {
+          ...row,
+          homeTeamId: fixture.homeTeamId,
+          awayTeamId: fixture.awayTeamId,
+        };
+      }),
+    });
   }
   return { previousSeason: source.previousSeason, forecasts };
+}
+
+/** Observed walk-forward rows with the fixture identity needed for storage. */
+export async function loadObservedCompetitionGoalForecasts(
+  competitionCode: CompetitionCode,
+  season: number,
+  window: GoalValidationWindow,
+  options: PromotionAdjustmentOptions = strengthModelOptions[competitionCode],
+) {
+  const period = {
+    from: new Date(window.from.getTime()),
+    until: new Date(window.until.getTime()),
+    resultsBefore: new Date(window.resultsBefore.getTime()),
+  };
+  const settings = { ...options };
+  const source = await loadObservedStrengthForecasts(
+    competitionCode,
+    season,
+    period,
+    [{ id: 'observed', options: settings }],
+  );
+  if (source === null) return null;
+  return {
+    competitionCode,
+    season,
+    previousSeason: source.previousSeason,
+    window: period,
+    options: settings,
+    resultAvailability: { mode: 'observed' as const, delayHours: null },
+    rows: source.forecasts[0]?.rows ?? [],
+  };
 }
 
 /**

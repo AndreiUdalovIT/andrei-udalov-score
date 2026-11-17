@@ -36,6 +36,20 @@
       "when": 1794261082700,
       "tag": "0004_standings_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794775452000,
+      "tag": "0005_predictions",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794844468793,
+      "tag": "0006_match_observations",
+      "breakpoints": true
     }
   ]
 }

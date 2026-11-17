@@ -9,6 +9,9 @@ import standingsFixture from '@/lib/football-data/fixtures/standings.json';
 import { syncFullCompetitions } from './full';
 
 vi.mock('server-only', () => ({}));
+vi.mock('../predictions/upcoming', () => ({
+  publishSyncedPredictions: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('../db/client', async () => {
   const { drizzle } = await import('drizzle-orm/neon-http');
   const schema = await import('../db/schema');

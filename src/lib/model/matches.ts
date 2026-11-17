@@ -6,7 +6,9 @@ export type ModelMatch = VenueMatch & {
   id: number;
   utcDate: Date;
   lastUpdated: Date;
-  /** Availability of the supplied score version, explicit when reconstructed. */
+  /** Database receipt time of the supplied observed match state. */
+  observedAt?: Date;
+  /** Explicit or reconstructed availability of the supplied score version. */
   resultAvailableAt?: Date;
 };
 
@@ -21,8 +23,8 @@ export type TrainingMatch = ModelMatch & {
 /**
  * The caller scopes matches to the intended competition, seasons and stages.
  * The cutoff is exclusive for kickoff and result availability.
- * Availability defaults to the latest API update.
- * Exact historical availability requires separately captured result versions.
+ * Recorded observations take priority over explicit availability and API times.
+ * Explicit and API availability require an API update after kickoff.
  */
 export function selectTrainingMatches(
   matches: readonly ModelMatch[],
@@ -36,7 +38,11 @@ export function selectTrainingMatches(
   return matches.filter((match): match is TrainingMatch => {
     const kickoff = match.utcDate.getTime();
     const updatedAt = match.lastUpdated.getTime();
-    const availableAt = (match.resultAvailableAt ?? match.lastUpdated).getTime();
+    const availableAt = (
+      match.observedAt ??
+      match.resultAvailableAt ??
+      match.lastUpdated
+    ).getTime();
 
     return (
       match.status === 'FINISHED' &&
@@ -49,7 +55,7 @@ export function selectTrainingMatches(
       Number.isSafeInteger(match.awayGoals90) &&
       match.homeGoals90 >= 0 &&
       match.awayGoals90 >= 0 &&
-      updatedAt > kickoff &&
+      (match.observedAt !== undefined || updatedAt > kickoff) &&
       availableAt > kickoff &&
       availableAt < cutoff
     );
@@ -59,6 +65,7 @@ export function selectTrainingMatches(
 /**
  * Retrospective availability assumes a final score 24 hours after kickoff.
  * The supplied current score version includes any later corrections.
+ * Recorded observation times take priority during training selection.
  */
 export function reconstructResultAvailability<MatchRecord extends ModelMatch>(
   matches: readonly MatchRecord[],

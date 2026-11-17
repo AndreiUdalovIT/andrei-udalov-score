@@ -24,7 +24,7 @@ export type WalkForwardGoalRow = GoalValidationRow & {
 };
 
 /**
- * Retrospective outcomes in [from, until), with lastUpdated < resultsBefore.
+ * Retrospective outcomes in [from, until), available before resultsBefore.
  * The caller scopes fixtures to the intended competition, seasons and stages.
  * The forecaster receives fixture identity and an exclusive training cutoff
  * at kickoff. Earlier result revisions require separately captured versions.

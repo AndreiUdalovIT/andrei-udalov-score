@@ -1,12 +1,15 @@
 import { getCompetitionSeasonConfig } from '@/lib/config/competition-seasons';
 
-import type { SeasonFixtureScore } from './season-calendar-sampler';
+import {
+  reconcileRoundRobinSeason,
+  type RoundRobinMatchScore,
+} from './round-robin-season';
 import { groupSeasonRankings } from './season-ranking-groups';
-import { projectSeasonStats, type SeasonStatsBaseline } from './season-stats';
+import type { SeasonStatsBaseline } from './season-stats';
 
 export const PREMIER_LEAGUE_RANKING_ALGORITHM = 'pl-table-head-to-head-v1';
 
-export type PremierLeagueMatchScore = Omit<SeasonFixtureScore, 'source'>;
+export type PremierLeagueMatchScore = RoundRobinMatchScore;
 
 export type PremierLeaguePositionGroup = {
   from: number;
@@ -61,23 +64,8 @@ export function rankPremierLeagueSeason(
   const config = getCompetitionSeasonConfig('PL', season);
   if (config === undefined) return null;
 
-  const stats = projectSeasonStats(
-    rows,
-    scores.map((score) => ({ ...score, source: 'known-result' as const })),
-  );
+  const stats = reconcileRoundRobinSeason(rows, scores, config);
   if (stats === null) return null;
-  if (
-    stats.length !== config.teamCount ||
-    scores.length !== (config.teamCount * config.matchdays) / 2
-  ) {
-    return null;
-  }
-  const pairs = new Set<string>();
-  for (const score of scores) {
-    const pair = `${score.homeTeamId}:${score.awayTeamId}`;
-    if (pairs.has(pair)) return null;
-    pairs.add(pair);
-  }
 
   const decisiveBoundaries = [
     ...new Set([1, ...config.zones.flatMap(({ from, to }) => [from - 1, to])]),

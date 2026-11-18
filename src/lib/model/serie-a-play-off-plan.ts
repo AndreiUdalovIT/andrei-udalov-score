@@ -1,12 +1,17 @@
 import type { RoundRobinMatchScore } from './round-robin-season';
 import {
+  SEASON_LOTS_SAMPLING_ALGORITHM,
+  type SeasonLotGroup,
+  type SimulatedSeasonLots,
+} from './season-lots-sampler';
+import {
   rankSerieAPreliminaryTable,
   type SerieAPreliminaryPositionGroup,
   type SerieAPreliminaryRanking,
 } from './serie-a-preliminary-ranking';
 import type { SeasonStatsBaseline } from './season-stats';
 
-export const SERIE_A_PLAY_OFF_PLAN_ALGORITHM = 'sa-title-survival-play-off-plan-v1';
+export const SERIE_A_PLAY_OFF_PLAN_ALGORITHM = 'sa-title-survival-play-off-plan-v2';
 
 const supportedSeasons: readonly number[] = [2023, 2024, 2025, 2026];
 
@@ -50,15 +55,84 @@ export type SerieAPlayOffPlan = {
   scope: 'play-off-plan';
   /** Complete list of Serie A UEFA finalists in this scenario, or null if unknown. */
   uefaFinalistTeamIds: number[] | null;
+  /** Original criterion groups, retained even after simulated lot resolution. */
   preliminary: SerieAPreliminaryRanking;
+  /** Null retains unresolved candidates; supplied lots are always simulated. */
+  lots: SimulatedSeasonLots | null;
   events: SerieAPlayOffEvent[];
 };
+
+export type SerieAPlayOffLotsInput = Readonly<
+  Omit<SimulatedSeasonLots, 'orders'>
+> & {
+  readonly orders: readonly SeasonLotGroup[];
+};
+
+type CandidateGroup = Pick<
+  SerieAPreliminaryPositionGroup,
+  'from' | 'points' | 'teamIds'
+>;
+
+function copySimulatedLots(
+  preliminary: SerieAPreliminaryRanking,
+  lots: SerieAPlayOffLotsInput | null,
+): SimulatedSeasonLots | null {
+  if (lots === null) return null;
+  const groups = preliminary.groups.filter(
+    (group) => group.reason === 'drawing-of-lots-required',
+  );
+  const byStart = new Map(groups.map((group) => [group.from, group]));
+  const minimumDraws = groups.reduce(
+    (sum, group) => sum + group.teamIds.length - 1,
+    0,
+  );
+  if (
+    lots.algorithm !== SEASON_LOTS_SAMPLING_ALGORITHM ||
+    lots.source !== 'simulated-lots' ||
+    !Number.isSafeInteger(lots.randomDraws) ||
+    lots.randomDraws < minimumDraws ||
+    (minimumDraws === 0 && lots.randomDraws !== 0) ||
+    lots.orders.length !== groups.length
+  ) {
+    throw new RangeError(
+      'simulated lots require supported metadata and every unresolved group',
+    );
+  }
+  const seen = new Set<number>();
+  const orders = Array.from(lots.orders, (order) => {
+    if (order === undefined) {
+      throw new RangeError('simulated orders cannot contain missing groups');
+    }
+    const group = byStart.get(order.from);
+    const teamIds = Array.from(order.teamIds);
+    if (
+      group === undefined ||
+      seen.has(order.from) ||
+      order.to !== group.to ||
+      teamIds.length !== group.teamIds.length ||
+      new Set(teamIds).size !== teamIds.length ||
+      teamIds.some((id) => !group.teamIds.includes(id))
+    ) {
+      throw new RangeError(
+        'each simulated order must permute exactly one unresolved group',
+      );
+    }
+    seen.add(order.from);
+    return { from: order.from, to: order.to, teamIds };
+  });
+  return {
+    algorithm: SEASON_LOTS_SAMPLING_ALGORITHM,
+    source: 'simulated-lots',
+    randomDraws: lots.randomDraws,
+    orders: orders.sort((left, right) => left.from - right.from),
+  };
+}
 
 function decide(
   season: number,
   finalists: ReadonlySet<number> | null,
-  higher: SerieAPreliminaryPositionGroup,
-  lower: SerieAPreliminaryPositionGroup,
+  higher: CandidateGroup,
+  lower: CandidateGroup,
 ): SerieAPlayOffEvent['decision'] {
   if (season !== 2026) return 'play-off-required';
   if (finalists === null) return 'uefa-finalists-required';
@@ -87,10 +161,15 @@ function decide(
  * title game or the second survival leg, subject to legacy venue restrictions.
  * For 2026/27, a UEFA finalist among the actual pair replaces that event with
  * classifica avulsa. Null is unknown finalist context; [] is explicitly no finalists.
- * A partial draw may leave the exception conditional on the selected participants.
+ * Unresolved lots may leave the exception conditional on selected participants.
  * Candidate slots from the same unresolved group share one draw without replacement.
  * Shared candidate pools across events must reuse one consistent draw.
- * This function does not draw lots, select venues, play games or finalize the table.
+ * Optional simulated lots must cover every and only unresolved lot group with
+ * one complete permutation. Their order resolves all positions across events.
+ * Preserve the original preliminary groups and copy the simulated provenance.
+ * Lot metadata is validated, but its random history cannot be reconstructed here.
+ * This function does not consume randomness, select venues, play games or finalize
+ * the table. Omitted lots retain the original unresolved candidate pools.
  * Return null for an unavailable preliminary table; invalid inputs throw RangeError.
  */
 export function planSerieAPlayOffs(
@@ -98,6 +177,7 @@ export function planSerieAPlayOffs(
   scores: readonly Readonly<RoundRobinMatchScore>[],
   season: number,
   uefaFinalistTeamIds: readonly number[] | null = null,
+  lots: SerieAPlayOffLotsInput | null = null,
 ): SerieAPlayOffPlan | null {
   const preliminary = rankSerieAPreliminaryTable(rows, scores, season);
   if (preliminary === null || !supportedSeasons.includes(season)) return null;
@@ -114,15 +194,28 @@ export function planSerieAPlayOffs(
       finalists!.add(id);
     }
   }
+  const appliedLots = copySimulatedLots(preliminary, lots);
+  const orders = new Map(
+    appliedLots?.orders.map((order) => [order.from, order]) ?? [],
+  );
   const events: SerieAPlayOffEvent[] = [];
   for (const [kind, higherPosition, lowerPosition] of [
     ['title', 1, 2],
     ['survival', 17, 18],
   ] as const) {
-    const at = (position: number) =>
-      preliminary.groups.find(
+    const at = (position: number): CandidateGroup => {
+      const group = preliminary.groups.find(
         (group) => group.from <= position && position <= group.to,
       )!;
+      const order = orders.get(group.from);
+      return order === undefined
+        ? group
+        : {
+            from: position,
+            points: group.points,
+            teamIds: [order.teamIds[position - group.from]!],
+          };
+    };
     const higher = at(higherPosition);
     const lower = at(lowerPosition);
     if (higher.points !== lower.points) continue;
@@ -168,6 +261,7 @@ export function planSerieAPlayOffs(
     uefaFinalistTeamIds:
       finalists === null ? null : [...finalists].sort((left, right) => left - right),
     preliminary,
+    lots: appliedLots,
     events,
   };
 }

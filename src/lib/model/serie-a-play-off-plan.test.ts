@@ -81,7 +81,11 @@ describe('Serie A play-off planning', () => {
     (season) => {
       const scores = calendar();
       const result = planSerieAPlayOffs(table(scores), scores, season)!;
+      expect(SERIE_A_PLAY_OFF_PLAN_ALGORITHM).toBe(
+        'sa-title-survival-play-off-plan-v2',
+      );
       expect(result.algorithm).toBe(SERIE_A_PLAY_OFF_PLAN_ALGORITHM);
+      expect(result.lots).toBeNull();
       expect(result.scope).toBe('play-off-plan');
       expect(result.season).toBe(season);
       expect(result.uefaFinalistTeamIds).toBeNull();

@@ -5,10 +5,15 @@ import {
   reconcileRoundRobinSeason,
   type RoundRobinMatchScore,
 } from './round-robin-season';
+import {
+  copySimulatedSeasonLots,
+  type SimulatedSeasonLots,
+  type SimulatedSeasonLotsInput,
+} from './season-lots-sampler';
 import { groupSeasonRankings } from './season-ranking-groups';
 import type { SeasonStatsBaseline } from './season-stats';
 
-export const LIGUE1_RANKING_ALGORITHM = 'fl1-season-head-to-head-v1';
+export const LIGUE1_RANKING_ALGORITHM = 'fl1-season-head-to-head-v2';
 
 export type Ligue1Ruleset = 'lfp-518-ter-2023-2025' | 'lfp-518-ter-2025-2027';
 
@@ -36,6 +41,7 @@ export type Ligue1PositionGroup = {
     | 'season-criteria'
     | 'disciplinary-data-required'
     | 'drawing-of-lots-required'
+    | 'simulated-lots'
     | 'league-decision-required';
 };
 
@@ -45,6 +51,8 @@ export type Ligue1SeasonRanking = {
   ruleset: Ligue1Ruleset;
   qualificationNote: string | null;
   groups: Ligue1PositionGroup[];
+  /** Copied simulated provenance, or null while lots are not supplied. */
+  lots: SimulatedSeasonLots | null;
 };
 
 /**
@@ -59,7 +67,10 @@ export type Ligue1SeasonRanking = {
  * Final disciplinary totals are supplied separately, with lower totals better.
  * Missing future discipline keeps a range; current totals are not final forecasts.
  * Complete modern ties need a draw of lots; legacy ties need an LFP decision.
- * This function records the unresolved range without performing either action.
+ * Optional simulated lots resolve every eligible modern draw group in one
+ * consistent order. Missing discipline and legacy LFP decisions remain unresolved;
+ * a supplied order cannot replace them. This function consumes no randomness.
+ * Preserve the lot source/version/count separately; official draws need another input.
  * Return null for unconfigured seasons, inconsistent totals or incomplete pairs.
  * Invalid inputs and unsafe arithmetic throw RangeError.
  */
@@ -68,6 +79,7 @@ export function rankLigue1Season(
   scores: readonly Readonly<RoundRobinMatchScore>[],
   season: number,
   discipline: readonly Readonly<Ligue1DisciplinaryPoints>[] = [],
+  lots: SimulatedSeasonLotsInput | null = null,
 ): Ligue1SeasonRanking | null {
   if (!Number.isSafeInteger(season))
     throw new RangeError('season must be a safe integer');
@@ -177,11 +189,30 @@ export function rankLigue1Season(
     }
   }
 
+  const appliedLots = copySimulatedSeasonLots(
+    groups.filter((group) => group.reason === 'drawing-of-lots-required'),
+    lots,
+  );
+  const orders = new Map(
+    appliedLots?.orders.map((order) => [order.from, order]) ?? [],
+  );
+  const resolvedGroups = groups.flatMap((group): Ligue1PositionGroup[] => {
+    const order = orders.get(group.from);
+    if (order === undefined) return [group];
+    return order.teamIds.map((teamId, index) => ({
+      from: order.from + index,
+      to: order.from + index,
+      teamIds: [teamId],
+      reason: 'simulated-lots',
+    }));
+  });
+
   return {
     algorithm: LIGUE1_RANKING_ALGORITHM,
     season,
     ruleset,
     qualificationNote: config.qualificationNote,
-    groups,
+    groups: resolvedGroups,
+    lots: appliedLots,
   };
 }

@@ -1,8 +1,8 @@
 import type { RoundRobinMatchScore } from './round-robin-season';
 import {
-  SEASON_LOTS_SAMPLING_ALGORITHM,
-  type SeasonLotGroup,
+  copySimulatedSeasonLots,
   type SimulatedSeasonLots,
+  type SimulatedSeasonLotsInput,
 } from './season-lots-sampler';
 import {
   rankSerieAPreliminaryTable,
@@ -62,71 +62,12 @@ export type SerieAPlayOffPlan = {
   events: SerieAPlayOffEvent[];
 };
 
-export type SerieAPlayOffLotsInput = Readonly<
-  Omit<SimulatedSeasonLots, 'orders'>
-> & {
-  readonly orders: readonly SeasonLotGroup[];
-};
+export type SerieAPlayOffLotsInput = SimulatedSeasonLotsInput;
 
 type CandidateGroup = Pick<
   SerieAPreliminaryPositionGroup,
   'from' | 'points' | 'teamIds'
 >;
-
-function copySimulatedLots(
-  preliminary: SerieAPreliminaryRanking,
-  lots: SerieAPlayOffLotsInput | null,
-): SimulatedSeasonLots | null {
-  if (lots === null) return null;
-  const groups = preliminary.groups.filter(
-    (group) => group.reason === 'drawing-of-lots-required',
-  );
-  const byStart = new Map(groups.map((group) => [group.from, group]));
-  const minimumDraws = groups.reduce(
-    (sum, group) => sum + group.teamIds.length - 1,
-    0,
-  );
-  if (
-    lots.algorithm !== SEASON_LOTS_SAMPLING_ALGORITHM ||
-    lots.source !== 'simulated-lots' ||
-    !Number.isSafeInteger(lots.randomDraws) ||
-    lots.randomDraws < minimumDraws ||
-    (minimumDraws === 0 && lots.randomDraws !== 0) ||
-    lots.orders.length !== groups.length
-  ) {
-    throw new RangeError(
-      'simulated lots require supported metadata and every unresolved group',
-    );
-  }
-  const seen = new Set<number>();
-  const orders = Array.from(lots.orders, (order) => {
-    if (order === undefined) {
-      throw new RangeError('simulated orders cannot contain missing groups');
-    }
-    const group = byStart.get(order.from);
-    const teamIds = Array.from(order.teamIds);
-    if (
-      group === undefined ||
-      seen.has(order.from) ||
-      order.to !== group.to ||
-      teamIds.length !== group.teamIds.length ||
-      new Set(teamIds).size !== teamIds.length ||
-      teamIds.some((id) => !group.teamIds.includes(id))
-    ) {
-      throw new RangeError(
-        'each simulated order must permute exactly one unresolved group',
-      );
-    }
-    seen.add(order.from);
-    return { from: order.from, to: order.to, teamIds };
-  });
-  return {
-    algorithm: SEASON_LOTS_SAMPLING_ALGORITHM,
-    source: 'simulated-lots',
-    randomDraws: lots.randomDraws,
-    orders: orders.sort((left, right) => left.from - right.from),
-  };
-}
 
 function decide(
   season: number,
@@ -194,7 +135,12 @@ export function planSerieAPlayOffs(
       finalists!.add(id);
     }
   }
-  const appliedLots = copySimulatedLots(preliminary, lots);
+  const appliedLots = copySimulatedSeasonLots(
+    preliminary.groups.filter(
+      (group) => group.reason === 'drawing-of-lots-required',
+    ),
+    lots,
+  );
   const orders = new Map(
     appliedLots?.orders.map((order) => [order.from, order]) ?? [],
   );

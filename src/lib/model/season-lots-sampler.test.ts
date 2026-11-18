@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createSeededRandom } from './seeded-random';
 import {
+  copySimulatedSeasonLots,
   createSeasonLotsSampler,
   SEASON_LOTS_SAMPLING_ALGORITHM,
+  type SimulatedSeasonLots,
 } from './season-lots-sampler';
 import { planSerieAPlayOffs } from './serie-a-play-off-plan';
 import { projectSeasonStats } from './season-stats';
@@ -318,5 +320,96 @@ describe('reproducible season lot sampling', () => {
       teamAt(event.lowerSlot.position),
     ]);
     expect(new Set(participants).size).toBe(4);
+  });
+});
+
+describe('shared simulated lot result validation', () => {
+  it('keeps null distinct from a copied empty simulated result', () => {
+    expect(copySimulatedSeasonLots([triple], null)).toBeNull();
+    const empty = createSeasonLotsSampler([]).sample(() => {
+      throw new Error('no random value expected');
+    });
+    const copied = copySimulatedSeasonLots([], empty)!;
+    expect(copied).toEqual(empty);
+    expect(copied).not.toBe(empty);
+    expect(copied.orders).not.toBe(empty.orders);
+  });
+
+  it('copies the permutation and retains actual random consumption including rejections', () => {
+    const draw = createSeasonLotsSampler([triple]).sample(
+      numerators(scale - 1, 0, 0),
+    );
+    const copied = copySimulatedSeasonLots([triple], draw)!;
+    expect(copied).toEqual(draw);
+    expect(copied.randomDraws).toBe(3);
+    copied.orders[0]!.teamIds.push(999);
+    expect(draw.orders[0]!.teamIds).toEqual([2, 3, 1]);
+  });
+
+  it('canonicalizes group order while preserving the drawn member order', () => {
+    const groups = [
+      { from: 8, to: 9, teamIds: [8, 9] },
+      { from: 1, to: 3, teamIds: [1, 2, 3] },
+    ];
+    const draw: SimulatedSeasonLots = {
+      algorithm: SEASON_LOTS_SAMPLING_ALGORITHM,
+      source: 'simulated-lots' as const,
+      randomDraws: 3,
+      orders: [
+        { from: 8, to: 9, teamIds: [9, 8] },
+        { from: 1, to: 3, teamIds: [3, 1, 2] },
+      ],
+    };
+    const copied = copySimulatedSeasonLots(groups, draw)!;
+    expect(copied.orders).toEqual([
+      { from: 1, to: 3, teamIds: [3, 1, 2] },
+      { from: 8, to: 9, teamIds: [9, 8] },
+    ]);
+    expect(draw.orders.map((order) => order.from)).toEqual([8, 1]);
+    expect(groups.map((group) => group.from)).toEqual([8, 1]);
+  });
+
+  it.each([
+    { groups: [{ from: 1, to: 1, teamIds: [1] }] },
+    { groups: [{ from: 1, to: 3, teamIds: [1, 2] }] },
+    { groups: [{ from: 1, to: 2, teamIds: [1, 1] }] },
+    {
+      groups: [
+        { from: 1, to: 2, teamIds: [1, 2] },
+        { from: 2, to: 3, teamIds: [3, 4] },
+      ],
+    },
+    {
+      groups: [
+        { from: 1, to: 2, teamIds: [1, 2] },
+        { from: 8, to: 9, teamIds: [2, 3] },
+      ],
+    },
+  ])('validates expected groups even for null outcomes: %j', ({ groups }) => {
+    expect(() => copySimulatedSeasonLots(groups, null)).toThrow(RangeError);
+  });
+
+  it('accepts frozen inputs and returns independent order objects and arrays', () => {
+    const groups = Object.freeze([
+      Object.freeze({ from: 1, to: 3, teamIds: Object.freeze([3, 2, 1]) }),
+    ]);
+    const sampled = createSeasonLotsSampler(groups).sample(
+      createSeededRandom([1, 2, 3, 4]),
+    );
+    const draw = Object.freeze({
+      ...sampled,
+      orders: Object.freeze(
+        sampled.orders.map((order) =>
+          Object.freeze({ ...order, teamIds: Object.freeze([...order.teamIds]) }),
+        ),
+      ),
+    });
+    const expected = copySimulatedSeasonLots(groups, draw)!;
+    const copied = copySimulatedSeasonLots(groups, draw)!;
+    expect(copied).toEqual(expected);
+    copied.orders[0]!.from = 99;
+    copied.orders[0]!.teamIds.pop();
+    expect(copySimulatedSeasonLots(groups, draw)).toEqual(expected);
+    expect(draw.orders[0]!.teamIds).toHaveLength(3);
   });
 });

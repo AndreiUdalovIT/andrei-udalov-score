@@ -19,6 +19,12 @@ export type SimulatedSeasonLots = {
   orders: { from: number; to: number; teamIds: number[] }[];
 };
 
+export type SimulatedSeasonLotsInput = Readonly<
+  Omit<SimulatedSeasonLots, 'orders'>
+> & {
+  readonly orders: readonly SeasonLotGroup[];
+};
+
 export type SeasonLotsSampler = {
   readonly algorithm: typeof SEASON_LOTS_SAMPLING_ALGORITHM;
   readonly groupCount: number;
@@ -128,5 +134,64 @@ export function createSeasonLotsSampler(
         orders,
       };
     },
+  };
+}
+
+/**
+ * Validate and copy a complete simulated lot result for caller-selected groups.
+ * Expected groups are validated even when lots is null, which retains unknown
+ * outcomes. The caller determines eligibility; missing criteria do not allow lots.
+ * Supplied orders must cover every expected group exactly once, preserving their
+ * complete membership and range. Copy orders by position and retain member order.
+ * Validate source/version and the minimum random count, not the random history.
+ * This function consumes no randomness and returns independent mutable copies.
+ */
+export function copySimulatedSeasonLots(
+  groups: readonly SeasonLotGroup[],
+  lots: SimulatedSeasonLotsInput | null,
+): SimulatedSeasonLots | null {
+  const sampler = createSeasonLotsSampler(groups);
+  if (lots === null) return null;
+  const byStart = new Map(groups.map((group) => [group.from, group]));
+  const minimumDraws = sampler.minimumRandomDraws;
+  if (
+    lots.algorithm !== SEASON_LOTS_SAMPLING_ALGORITHM ||
+    lots.source !== 'simulated-lots' ||
+    !Number.isSafeInteger(lots.randomDraws) ||
+    lots.randomDraws < minimumDraws ||
+    (minimumDraws === 0 && lots.randomDraws !== 0) ||
+    lots.orders.length !== sampler.groupCount
+  ) {
+    throw new RangeError(
+      'simulated lots require supported metadata and every unresolved group',
+    );
+  }
+  const seen = new Set<number>();
+  const orders = Array.from(lots.orders, (order) => {
+    if (order === undefined) {
+      throw new RangeError('simulated orders cannot contain missing groups');
+    }
+    const group = byStart.get(order.from);
+    const teamIds = Array.from(order.teamIds);
+    if (
+      group === undefined ||
+      seen.has(order.from) ||
+      order.to !== group.to ||
+      teamIds.length !== group.teamIds.length ||
+      new Set(teamIds).size !== teamIds.length ||
+      teamIds.some((id) => !group.teamIds.includes(id))
+    ) {
+      throw new RangeError(
+        'each simulated order must permute exactly one unresolved group',
+      );
+    }
+    seen.add(order.from);
+    return { from: order.from, to: order.to, teamIds };
+  });
+  return {
+    algorithm: SEASON_LOTS_SAMPLING_ALGORITHM,
+    source: 'simulated-lots',
+    randomDraws: lots.randomDraws,
+    orders: orders.sort((left, right) => left.from - right.from),
   };
 }

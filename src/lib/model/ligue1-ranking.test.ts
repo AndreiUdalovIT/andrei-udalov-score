@@ -8,6 +8,13 @@ import {
   type Ligue1DisciplinaryPoints,
 } from './ligue1-ranking';
 import type { RoundRobinMatchScore } from './round-robin-season';
+import { createSeededRandom } from './seeded-random';
+import {
+  createSeasonLotsSampler,
+  SEASON_LOTS_SAMPLING_ALGORITHM,
+  type SeasonLotGroup,
+  type SimulatedSeasonLots,
+} from './season-lots-sampler';
 import { projectSeasonStats, type SeasonStatsBaseline } from './season-stats';
 
 type Override = readonly [
@@ -82,7 +89,9 @@ describe('Ligue 1 final-season ranking', () => {
       const scores = calendar();
       const result = rankLigue1Season(table(scores), scores, season)!;
       expect(scores).toHaveLength(306);
+      expect(LIGUE1_RANKING_ALGORITHM).toBe('fl1-season-head-to-head-v2');
       expect(result.algorithm).toBe(LIGUE1_RANKING_ALGORITHM);
+      expect(result.lots).toBeNull();
       expect(result.season).toBe(season);
       expect(result.ruleset).toBe(
         season < 2025 ? 'lfp-518-ter-2023-2025' : 'lfp-518-ter-2025-2027',
@@ -566,5 +575,246 @@ describe('Ligue 1 final-season ranking', () => {
     expect(result).toEqual(expected);
     result.groups[0]!.teamIds.push(999);
     expect(rankLigue1Season(rows, scores, 2026, discipline)).toEqual(expected);
+  });
+});
+
+function simulatedLots(...orders: SeasonLotGroup[]): SimulatedSeasonLots {
+  return {
+    algorithm: SEASON_LOTS_SAMPLING_ALGORITHM,
+    source: 'simulated-lots',
+    randomDraws: orders.reduce((sum, order) => sum + order.teamIds.length - 1, 0),
+    orders: orders.map((order) => ({ ...order, teamIds: [...order.teamIds] })),
+  };
+}
+
+describe('Ligue 1 simulated lot resolution', () => {
+  it('keeps omitted and explicit null lots equivalent', () => {
+    const scores = calendar();
+    const rows = table(scores, [1, 2]);
+    const discipline = [1, 2].map((teamId) => ({ teamId, points: 0 }));
+    const unresolved = rankLigue1Season(rows, scores, 2026, discipline)!;
+    expect(rankLigue1Season(rows, scores, 2026, discipline, null)).toEqual(
+      unresolved,
+    );
+    expect(unresolved.lots).toBeNull();
+    expect(unresolved.groups[0]!.reason).toBe('drawing-of-lots-required');
+  });
+
+  it.each([2025, 2026])(
+    'resolves a fully equal modern group in season %s',
+    (season) => {
+      const scores = calendar();
+      const rows = table(scores, [1, 2, 3]);
+      const discipline = [1, 2, 3].map((teamId) => ({ teamId, points: 0 }));
+      const draw = simulatedLots({ from: 1, to: 3, teamIds: [3, 1, 2] });
+      const result = rankLigue1Season(rows, scores, season, discipline, draw)!;
+      expect(result.groups.slice(0, 3)).toEqual([
+        { from: 1, to: 1, teamIds: [3], reason: 'simulated-lots' },
+        { from: 2, to: 2, teamIds: [1], reason: 'simulated-lots' },
+        { from: 3, to: 3, teamIds: [2], reason: 'simulated-lots' },
+      ]);
+      expect(result.groups.slice(3).map((group) => group.teamIds[0])).toEqual(
+        Array.from({ length: 15 }, (_, index) => index + 4),
+      );
+      expect(result.lots).toEqual(draw);
+    },
+  );
+
+  it('uses the existing seeded sampler for one entire 18-club group', () => {
+    const scores = calendar();
+    const ids = Array.from({ length: 18 }, (_, index) => index + 1);
+    const rows = table(scores, ids);
+    const discipline = ids.map((teamId) => ({ teamId, points: 0 }));
+    const unresolved = rankLigue1Season(rows, scores, 2026, discipline)!;
+    const sampler = createSeasonLotsSampler(
+      unresolved.groups.filter(
+        (group) => group.reason === 'drawing-of-lots-required',
+      ),
+    );
+    const draw = sampler.sample(createSeededRandom([1, 2, 3, 4]));
+    const result = rankLigue1Season(rows, scores, 2026, discipline, draw)!;
+    expect(result.groups.map((group) => group.from)).toEqual(ids);
+    expect(result.groups.map((group) => group.to)).toEqual(ids);
+    expect(result.groups.map((group) => group.teamIds[0])).toEqual(
+      draw.orders[0]!.teamIds,
+    );
+    expect(
+      [...result.groups.flatMap((group) => group.teamIds)].sort(
+        (left, right) => left - right,
+      ),
+    ).toEqual(ids);
+    expect(result.groups.every((group) => group.reason === 'simulated-lots')).toBe(
+      true,
+    );
+    expect(result.lots!.randomDraws).toBe(17);
+  });
+
+  it('resolves separate groups at the correct offsets and copies canonical lot metadata', () => {
+    const scores = calendar();
+    const rows = table(scores, [1, 2]);
+    rows[8]!.points = rows[7]!.points;
+    const discipline = [1, 2, 8, 9].map((teamId) => ({ teamId, points: 0 }));
+    const draw = simulatedLots(
+      { from: 8, to: 9, teamIds: [9, 8] },
+      { from: 1, to: 2, teamIds: [2, 1] },
+    );
+    const result = rankLigue1Season(rows, scores, 2026, discipline, draw)!;
+    expect(result.groups.slice(0, 2).map((group) => group.teamIds[0])).toEqual([
+      2, 1,
+    ]);
+    expect(result.groups.slice(7, 9)).toEqual([
+      { from: 8, to: 8, teamIds: [9], reason: 'simulated-lots' },
+      { from: 9, to: 9, teamIds: [8], reason: 'simulated-lots' },
+    ]);
+    expect(result.lots!.orders.map((order) => order.from)).toEqual([1, 8]);
+    expect(draw.orders.map((order) => order.from)).toEqual([8, 1]);
+    expect(
+      rankLigue1Season(
+        [...rows].reverse(),
+        [...scores].reverse(),
+        2026,
+        [...discipline].reverse(),
+        JSON.parse(JSON.stringify(draw)),
+      ),
+    ).toEqual(result);
+  });
+
+  it.each([2025, 2026])(
+    'rejects lots that try to replace unavailable disciplinary data in %s',
+    (season) => {
+      const scores = calendar();
+      const rows = table(scores, [1, 2]);
+      const draw = simulatedLots({ from: 1, to: 2, teamIds: [2, 1] });
+      expect(() => rankLigue1Season(rows, scores, season, [], draw)).toThrow(
+        RangeError,
+      );
+      const result = rankLigue1Season(rows, scores, season, [], simulatedLots())!;
+      expect(result.groups[0]!.reason).toBe('disciplinary-data-required');
+    },
+  );
+
+  it.each([2023, 2024])(
+    'preserves an unresolved LFP decision instead of applying model lots in %s',
+    (season) => {
+      const scores = calendar();
+      const rows = table(scores, [1, 2]);
+      const discipline = [1, 2].map((teamId) => ({ teamId, points: 0 }));
+      const draw = simulatedLots({ from: 1, to: 2, teamIds: [2, 1] });
+      expect(() => rankLigue1Season(rows, scores, season, discipline, draw)).toThrow(
+        RangeError,
+      );
+      const result = rankLigue1Season(
+        rows,
+        scores,
+        season,
+        discipline,
+        simulatedLots(),
+      )!;
+      expect(result.groups[0]).toEqual({
+        from: 1,
+        to: 2,
+        teamIds: [1, 2],
+        reason: 'league-decision-required',
+      });
+      expect(result.lots!.orders).toEqual([]);
+    },
+  );
+
+  it('rejects lots that would override a disciplinary ordering', () => {
+    const scores = calendar();
+    const rows = table(scores, [1, 2]);
+    const discipline = [
+      { teamId: 1, points: 1 },
+      { teamId: 2, points: 0 },
+    ];
+    const draw = simulatedLots({ from: 1, to: 2, teamIds: [1, 2] });
+    expect(() => rankLigue1Season(rows, scores, 2026, discipline, draw)).toThrow(
+      RangeError,
+    );
+    expect(
+      rankLigue1Season(rows, scores, 2026, discipline)!.groups[0]!.teamIds,
+    ).toEqual([2]);
+  });
+
+  it('resolves eligible lots while retaining a different group with missing discipline', () => {
+    const scores = calendar();
+    const rows = table(scores, [1, 2]);
+    rows[8]!.points = rows[7]!.points;
+    const discipline = [1, 2].map((teamId) => ({ teamId, points: 0 }));
+    const draw = simulatedLots({ from: 1, to: 2, teamIds: [2, 1] });
+    const result = rankLigue1Season(rows, scores, 2026, discipline, draw)!;
+    expect(result.groups.slice(0, 2).map((group) => group.teamIds[0])).toEqual([
+      2, 1,
+    ]);
+    expect(result.groups.find((group) => group.from === 8)).toEqual({
+      from: 8,
+      to: 9,
+      teamIds: [8, 9],
+      reason: 'disciplinary-data-required',
+    });
+    expect(result.lots).toEqual(draw);
+  });
+
+  it('validates supplied orders even when the table has no eligible draw', () => {
+    const scores = calendar();
+    expect(() =>
+      rankLigue1Season(
+        table(scores),
+        scores,
+        2026,
+        [],
+        simulatedLots({ from: 1, to: 2, teamIds: [2, 1] }),
+      ),
+    ).toThrow(RangeError);
+  });
+
+  it('rejects missing groups and foreign members through shared validation', () => {
+    const scores = calendar();
+    const rows = table(scores, [1, 2]);
+    const discipline = [1, 2].map((teamId) => ({ teamId, points: 0 }));
+    expect(() =>
+      rankLigue1Season(rows, scores, 2026, discipline, simulatedLots()),
+    ).toThrow(RangeError);
+    expect(() =>
+      rankLigue1Season(
+        rows,
+        scores,
+        2026,
+        discipline,
+        simulatedLots({ from: 1, to: 2, teamIds: [2, 3] }),
+      ),
+    ).toThrow(RangeError);
+  });
+
+  it('returns null before lot validation when the underlying season is unavailable', () => {
+    const scores = calendar();
+    const draw = simulatedLots({ from: 1, to: 2, teamIds: [2, 1] });
+    expect(
+      rankLigue1Season(table(scores), scores.slice(1), 2026, [], draw),
+    ).toBeNull();
+    expect(rankLigue1Season([], [], 2027, [], draw)).toBeNull();
+  });
+
+  it('preserves frozen inputs and separates resolved groups from their lot audit', () => {
+    const scores = Object.freeze(calendar().map((score) => Object.freeze(score)));
+    const rows = Object.freeze(
+      table(scores, [1, 2, 3]).map((row) => Object.freeze(row)),
+    );
+    const discipline = Object.freeze(
+      [1, 2, 3].map((teamId) => Object.freeze({ teamId, points: 0 })),
+    );
+    const draw = simulatedLots({ from: 1, to: 3, teamIds: [3, 1, 2] });
+    Object.freeze(draw.orders[0]!.teamIds);
+    Object.freeze(draw.orders[0]);
+    Object.freeze(draw.orders);
+    Object.freeze(draw);
+    const expected = rankLigue1Season(rows, scores, 2026, discipline, draw)!;
+    const result = rankLigue1Season(rows, scores, 2026, discipline, draw)!;
+    result.groups[0]!.teamIds.push(999);
+    expect(result.lots!.orders[0]!.teamIds).toEqual([3, 1, 2]);
+    result.lots!.orders[0]!.teamIds.push(888);
+    expect(result.groups[1]!.teamIds).toEqual([1]);
+    expect(draw.orders[0]!.teamIds).toEqual([3, 1, 2]);
+    expect(rankLigue1Season(rows, scores, 2026, discipline, draw)).toEqual(expected);
   });
 });

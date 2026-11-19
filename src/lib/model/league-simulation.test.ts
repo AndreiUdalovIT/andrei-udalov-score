@@ -1,0 +1,564 @@
+import { describe, expect, it } from 'vitest';
+
+import { getCompetitionSeasonConfig } from '@/lib/config/competition-seasons';
+import type { SiteCompetitionCode } from '@/lib/config/competitions';
+
+import {
+  createLeagueSimulation,
+  LEAGUE_SIMULATION_ALGORITHM,
+  type LeagueSimulationInput,
+} from './league-simulation';
+import type { SeasonCalendarFixture } from './season-calendar-sampler';
+import { SEEDED_RANDOM_ALGORITHM, type RandomSeed } from './seeded-random';
+import { projectSeasonStats } from './season-stats';
+
+function baselineFromKnown(
+  fixtures: readonly SeasonCalendarFixture[],
+  size: number,
+) {
+  const initial = Array.from({ length: size }, (_, index) => ({
+    teamId: index + 1,
+    playedGames: 0,
+    won: 0,
+    draw: 0,
+    lost: 0,
+    points: 0,
+    goalsFor: 0,
+    goalsAgainst: 0,
+  }));
+  const known = fixtures.flatMap((fixture) =>
+    fixture.kind === 'known-result'
+      ? [
+          {
+            id: fixture.id,
+            homeTeamId: fixture.homeTeamId,
+            awayTeamId: fixture.awayTeamId,
+            homeGoals90: fixture.homeGoals90,
+            awayGoals90: fixture.awayGoals90,
+            source: 'simulated' as const,
+          },
+        ]
+      : [],
+  );
+  return projectSeasonStats(initial, known)!.map((row) => ({
+    ...row,
+    points: -100 * row.teamId,
+  }));
+}
+
+function input(
+  competitionCode: SiteCompetitionCode = 'PL',
+  runs = 4,
+  forecast = true,
+): LeagueSimulationInput {
+  const size = getCompetitionSeasonConfig(competitionCode, 2026)!.teamCount;
+  const fixtures: SeasonCalendarFixture[] = [];
+  for (let homeTeamId = 1; homeTeamId <= size; homeTeamId += 1) {
+    for (let awayTeamId = 1; awayTeamId <= size; awayTeamId += 1) {
+      if (homeTeamId === awayTeamId) continue;
+      const identity = { id: fixtures.length + 1, homeTeamId, awayTeamId };
+      fixtures.push(
+        forecast && fixtures.length === 0
+          ? { ...identity, kind: 'forecast', homeRate90: 1.6, awayRate90: 0.8 }
+          : { ...identity, kind: 'known-result', homeGoals90: 1, awayGoals90: 0 },
+      );
+    }
+  }
+  return {
+    competitionCode,
+    season: 2026,
+    modelVersion: 'poisson-test-v1',
+    dataCutoffMs: Date.UTC(2026, 10, 19),
+    seed: [1, 2, 3, 4],
+    runs,
+    sampling: { tailTolerance: 1e-10, maxGoals: 40 },
+    baseline: baselineFromKnown(fixtures, size),
+    fixtures,
+  };
+}
+
+function withPoints(
+  base: LeagueSimulationInput,
+  values: Readonly<Record<number, number>>,
+): LeagueSimulationInput {
+  return {
+    ...base,
+    baseline: base.baseline.map((row) => ({
+      ...row,
+      points: values[row.teamId] ?? row.points,
+    })),
+  };
+}
+
+describe('cooperative seeded league simulation', () => {
+  it('matches fixture outcomes independently derived from C-reference random numerators', () => {
+    const job = createLeagueSimulation(input())!;
+    expect(job.status).toBe('ready');
+    expect(job.completedRuns).toBe(0);
+    expect(job.result()).toBeNull();
+    job.advance(4);
+    expect(job.status).toBe('complete');
+    expect(job.completedRuns).toBe(4);
+    const result = job.result()!;
+    expect(LEAGUE_SIMULATION_ALGORITHM).toBe(
+      'seeded-fixed-rate-league-simulation-v1',
+    );
+    expect(result.algorithm).toBe(LEAGUE_SIMULATION_ALGORITHM);
+    expect(result.versions.random).toBe(SEEDED_RANDOM_ALGORITHM);
+    // The existing C-reference numerators yield 0:0, 1:0, 3:0, 3:2 at rates 1.6/0.8.
+    // Gains are [1,3,3,3] and [1,0,0,0]; known games must not be added again.
+    expect(result.forecast.teams[0]!.expectedPoints).toBe(-97.5);
+    expect(result.forecast.teams[1]!.expectedPoints).toBe(-199.75);
+    expect(result.forecast.teams[0]!.pointsInterval80).toEqual({
+      lower: -99,
+      upper: -97,
+    });
+    expect(result.forecast.teams[1]!.pointsInterval80).toEqual({
+      lower: -200,
+      upper: -199,
+    });
+    expect(result.forecast.teams[2]!.expectedPoints).toBe(-300);
+    expect(result.forecast.teams[0]!.positionDistribution[0]!.count).toBe(4);
+    expect(result.samplingBounds.perRun).toBeGreaterThan(0);
+    expect(result.samplingBounds.allRuns).toBe(
+      Math.min(1, 4 * result.samplingBounds.perRun),
+    );
+    expect(result.lotPolicy).toBe('simulate-eligible-uniform-lots');
+    expect(JSON.parse(JSON.stringify(result))).toEqual(result);
+  });
+
+  it('keeps the same random stream across batches and recreates a job from its snapshot', () => {
+    const source = input();
+    const first = createLeagueSimulation(source)!;
+    first.advance(100);
+    const second = createLeagueSimulation({
+      ...source,
+      baseline: [...source.baseline].reverse(),
+      fixtures: [...source.fixtures].reverse(),
+      seed: JSON.parse(JSON.stringify(source.seed)),
+    })!;
+    second.advance();
+    expect(second.status).toBe('running');
+    expect(second.completedRuns).toBe(1);
+    expect(second.result()).toBeNull();
+    second.advance(2);
+    expect(second.completedRuns).toBe(3);
+    second.advance(100);
+    expect(second.result()).toEqual(first.result());
+    const replay = createLeagueSimulation(
+      JSON.parse(JSON.stringify(first.result()!.inputSnapshot)),
+    )!;
+    replay.advance(2);
+    replay.advance(2);
+    expect(replay.result()).toEqual(first.result());
+  });
+
+  it.each(['PL', 'PD', 'BL1', 'SA', 'FL1'] as const)(
+    'runs the existing %s projection/ranking/summary pipeline',
+    (code) => {
+      const source = input(code, 1);
+      const job = createLeagueSimulation(source)!;
+      job.advance();
+      const result = job.result()!;
+      expect(job.status).toBe('complete');
+      expect(result.forecast.competitionCode).toBe(code);
+      expect(result.forecast.teams).toHaveLength(source.baseline.length);
+      expect(result.forecast.teams[0]!.expectedPoints).toBe(-99);
+      expect(result.forecast.teams[1]!.expectedPoints).toBe(-199);
+      expect(
+        result.forecast.teams.every(
+          (team, index) => team.positionDistribution[index]!.count === 1,
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it('keeps completed known results and official deductions fixed', () => {
+    const source = input('PL', 3, false);
+    const job = createLeagueSimulation(source)!;
+    job.advance(3);
+    const result = job.result()!;
+    expect(result.forecast.teams[0]!.expectedPoints).toBe(-100);
+    expect(result.forecast.teams[0]!.pointsInterval80).toEqual({
+      lower: -100,
+      upper: -100,
+    });
+    expect(result.samplingBounds).toEqual({ perRun: 0, allRuns: 0 });
+    expect(result.inputSnapshot.modelVersion).toBe(source.modelVersion);
+    expect(result.inputSnapshot.dataCutoffMs).toBe(source.dataCutoffMs);
+    expect(result.inputSnapshot.seed).toEqual(source.seed);
+    expect(result.inputSnapshot.fixtures).toHaveLength(380);
+  });
+
+  it('samples only eligible Ligue 1 lots and retains fixed final discipline assumptions', () => {
+    const base = withPoints(input('FL1', 6, false), { 1: 0, 2: 0 });
+    const source = {
+      ...base,
+      fixedContext: {
+        ligue1Discipline: [
+          { teamId: 2, points: 0 },
+          { teamId: 1, points: 0 },
+        ],
+      },
+    };
+    const single = createLeagueSimulation(source)!;
+    single.advance(6);
+    const batched = createLeagueSimulation(source)!;
+    for (let index = 0; index < 6; index += 1) batched.advance();
+    const result = single.result()!;
+    expect(batched.result()).toEqual(result);
+    expect(result.versions.ranking).toBe('fl1-season-head-to-head-v2');
+    expect(result.inputSnapshot.fixedContext.ligue1Discipline).toEqual([
+      { teamId: 1, points: 0 },
+      { teamId: 2, points: 0 },
+    ]);
+    expect(
+      result.forecast.teams[0]!.positionDistribution.slice(0, 2).reduce(
+        (sum, bin) => sum + bin.count,
+        0,
+      ),
+    ).toBe(6);
+    expect(
+      result.forecast.teams[1]!.positionDistribution.slice(0, 2).reduce(
+        (sum, bin) => sum + bin.count,
+        0,
+      ),
+    ).toBe(6);
+    expect(result.samplingBounds).toEqual({ perRun: 0, allRuns: 0 });
+  });
+
+  it('uses explicitly supplied final Fair Play ranks for La Liga', () => {
+    const source = withPoints(input('PD', 2, false), { 1: 0, 2: 0 });
+    const job = createLeagueSimulation({
+      ...source,
+      fixedContext: {
+        laLigaFairPlay: [
+          { teamId: 2, rank: 2 },
+          { teamId: 1, rank: 1 },
+        ],
+      },
+    })!;
+    job.advance(2);
+    expect(job.result()!.forecast.teams[0]!.positionDistribution[0]!.count).toBe(2);
+    expect(job.result()!.inputSnapshot.fixedContext.laLigaFairPlay).toEqual([
+      { teamId: 1, rank: 1 },
+      { teamId: 2, rank: 2 },
+    ]);
+  });
+
+  it.each([
+    { code: 'PD' as const, expected: 'fair-play-data-required' },
+    { code: 'FL1' as const, expected: 'disciplinary-data-required' },
+    { code: 'BL1' as const, expected: 'play-off-required' },
+  ])(
+    'withholds a forecast for unresolved $code ranking criteria',
+    ({ code, expected }) => {
+      const job = createLeagueSimulation(
+        withPoints(input(code, 2, false), { 1: 0, 2: 0 }),
+      )!;
+      job.advance(2);
+      expect(job.status).toBe('unavailable');
+      expect(job.completedRuns).toBe(0);
+      expect(job.result()).toBeNull();
+      expect(job.unavailability!.reason).toBe('ranking-unresolved');
+      expect(job.unavailability!.groups[0]!.reason).toBe(expected);
+    },
+  );
+
+  it.each([2023, 2024])(
+    'does not invent a draw for an LFP decision in season %s',
+    (season) => {
+      const base = withPoints(input('FL1', 1, false), { 1: 0, 2: 0 });
+      const job = createLeagueSimulation({
+        ...base,
+        season,
+        fixedContext: {
+          ligue1Discipline: [
+            { teamId: 1, points: 0 },
+            { teamId: 2, points: 0 },
+          ],
+        },
+      })!;
+      job.advance();
+      expect(job.status).toBe('unavailable');
+      expect(job.unavailability!.groups[0]!.reason).toBe('league-decision-required');
+    },
+  );
+
+  it('withholds the entire forecast when a later sampled run needs a Premier League play-off', () => {
+    // Run 1 is 0:0 and keeps distinct points; run 2 is 1:0 and makes clubs 1/2
+    // fully equal in the complete league and both direct criteria.
+    const job = createLeagueSimulation(withPoints(input(), { 1: 0, 2: 3 }))!;
+    job.advance(100);
+    expect(job.status).toBe('unavailable');
+    expect(job.completedRuns).toBe(1);
+    expect(job.result()).toBeNull();
+    expect(job.unavailability).toEqual({
+      run: 2,
+      reason: 'ranking-unresolved',
+      playOffEvents: [],
+      groups: [{ from: 1, to: 2, teamIds: [1, 2], reason: 'play-off-required' }],
+    });
+    job.advance(100);
+    job.cancel();
+    expect(job.status).toBe('unavailable');
+    expect(job.completedRuns).toBe(1);
+  });
+
+  it('reports legitimate shared Premier League positions without randomizing them', () => {
+    const job = createLeagueSimulation(
+      withPoints(input('PL', 1, false), { 8: -800, 9: -800 }),
+    )!;
+    job.advance();
+    expect(job.status).toBe('unavailable');
+    expect(job.unavailability!.groups[0]).toEqual({
+      from: 8,
+      to: 9,
+      teamIds: [8, 9],
+      reason: 'shared-position',
+    });
+  });
+
+  it.each([
+    { finalists: null, decision: 'uefa-finalists-required' },
+    { finalists: [] as number[], decision: 'play-off-required' },
+  ])(
+    'reports the selected Serie A pair and required context: %j',
+    ({ finalists, decision }) => {
+      const base = withPoints(input('SA', 1, false), { 1: 0, 2: 0 });
+      const job = createLeagueSimulation({
+        ...base,
+        fixedContext: { serieAUefaFinalistTeamIds: finalists },
+      })!;
+      job.advance();
+      expect(job.status).toBe('unavailable');
+      expect(job.unavailability!.reason).toBe('serie-a-play-off-context-required');
+      const event = job.unavailability!.playOffEvents[0]!;
+      expect(event.higherSlot.candidateTeamIds).toEqual([2]);
+      expect(event.lowerSlot.candidateTeamIds).toEqual([1]);
+      expect(event.decision).toBe(decision);
+      expect(job.result()).toBeNull();
+    },
+  );
+
+  it('applies Serie A model lots and a known fixed UEFA waiver through the final ranker', () => {
+    const base = withPoints(input('SA', 1, false), { 1: 0, 2: 0 });
+    const job = createLeagueSimulation({
+      ...base,
+      fixedContext: { serieAUefaFinalistTeamIds: [1] },
+    })!;
+    job.advance();
+    const result = job.result()!;
+    expect(result.versions.ranking).toBe('sa-lots-and-play-offs-ranking-v1');
+    expect(result.forecast.teams[0]!.positionDistribution[1]!.count).toBe(1);
+    expect(result.forecast.teams[1]!.positionDistribution[0]!.count).toBe(1);
+    expect(result.inputSnapshot.fixedContext.serieAUefaFinalistTeamIds).toEqual([1]);
+  });
+
+  it.each([false, true])(
+    'cancels a job between batches, after progress: %s',
+    (started) => {
+      const job = createLeagueSimulation(input())!;
+      if (started) job.advance();
+      const completed = job.completedRuns;
+      job.cancel();
+      expect(job.status).toBe('cancelled');
+      job.advance(100);
+      expect(job.completedRuns).toBe(completed);
+      expect(job.result()).toBeNull();
+    },
+  );
+
+  it('keeps a completed result stable after cancellation and extra advances', () => {
+    const job = createLeagueSimulation(input('PL', 1))!;
+    job.advance();
+    const expected = job.result();
+    job.cancel();
+    job.advance(100);
+    expect(job.status).toBe('complete');
+    expect(job.completedRuns).toBe(1);
+    expect(job.result()).toEqual(expected);
+  });
+
+  it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
+    'rejects an invalid batch size without consuming runs: %s',
+    (size) => {
+      const job = createLeagueSimulation(input())!;
+      expect(() => job.advance(size)).toThrow(RangeError);
+      expect(job.status).toBe('ready');
+      expect(job.completedRuns).toBe(0);
+      job.advance(4);
+      expect(job.result()!.forecast.teams[0]!.expectedPoints).toBe(-97.5);
+    },
+  );
+
+  it('marks unexpected per-run arithmetic errors failed without publishing a prefix', () => {
+    const source = withPoints(input(), { 1: Number.MAX_SAFE_INTEGER - 2 });
+    const job = createLeagueSimulation(source)!;
+    job.advance();
+    expect(job.completedRuns).toBe(1);
+    expect(() => job.advance()).toThrow(RangeError); // Run 2 adds three points.
+    expect(job.status).toBe('failed');
+    expect(job.completedRuns).toBe(1);
+    expect(job.result()).toBeNull();
+    job.advance(100);
+    job.cancel();
+    expect(job.status).toBe('failed');
+  });
+
+  it.each([
+    { modelVersion: '' },
+    { dataCutoffMs: NaN },
+    { dataCutoffMs: 8640000000000001 },
+    { runs: 0 },
+    { seed: [0, 0, 0, 0] as RandomSeed },
+  ])('validates common model metadata and controls: %j', (patch) => {
+    expect(() => createLeagueSimulation({ ...input(), ...patch })).toThrow(
+      RangeError,
+    );
+  });
+
+  it('returns null for unsupported formats, seasons and insufficient Poisson support', () => {
+    const source = input();
+    expect(createLeagueSimulation({ ...source, competitionCode: 'CL' })).toBeNull();
+    expect(
+      createLeagueSimulation({
+        ...source,
+        competitionCode: 'ELC' as SiteCompetitionCode,
+      }),
+    ).toBeNull();
+    expect(createLeagueSimulation({ ...source, season: 2027 })).toBeNull();
+    expect(
+      createLeagueSimulation({
+        ...source,
+        sampling: { tailTolerance: 1e-12, maxGoals: 0 },
+      }),
+    ).toBeNull();
+  });
+
+  it('preflights known-result reconciliation and complete oriented pair coverage', () => {
+    const source = input();
+    const baseline = source.baseline.map((row, index) =>
+      index === 0 ? { ...row, goalsFor: row.goalsFor + 1 } : row,
+    );
+    expect(createLeagueSimulation({ ...source, baseline })).toBeNull();
+    expect(
+      createLeagueSimulation({ ...source, fixtures: source.fixtures.slice(1) }),
+    ).toBeNull();
+    const fixtures = source.fixtures.map((fixture) => ({ ...fixture }));
+    const index = fixtures.findIndex(
+      (fixture) => fixture.homeTeamId === 2 && fixture.awayTeamId === 1,
+    );
+    fixtures[index] = { ...fixtures[index]!, homeTeamId: 1, awayTeamId: 2 };
+    expect(
+      createLeagueSimulation({
+        ...source,
+        fixtures,
+        baseline: baselineFromKnown(fixtures, 20),
+      }),
+    ).toBeNull();
+  });
+
+  it('validates rates, known scores and fixed league context before returning a job', () => {
+    const source = input();
+    const invalidRate: SeasonCalendarFixture = {
+      id: 1,
+      homeTeamId: 1,
+      awayTeamId: 2,
+      kind: 'forecast',
+      homeRate90: NaN,
+      awayRate90: 1,
+    };
+    expect(() =>
+      createLeagueSimulation({
+        ...source,
+        fixtures: [invalidRate, ...source.fixtures.slice(1)],
+      }),
+    ).toThrow(RangeError);
+    const invalidKnown: SeasonCalendarFixture = {
+      id: 2,
+      homeTeamId: 1,
+      awayTeamId: 3,
+      kind: 'known-result',
+      homeGoals90: -1,
+      awayGoals90: 0,
+    };
+    expect(() =>
+      createLeagueSimulation({
+        ...source,
+        fixtures: [source.fixtures[0]!, invalidKnown, ...source.fixtures.slice(2)],
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      createLeagueSimulation({
+        ...source,
+        fixedContext: { ligue1Discipline: [{ teamId: 1, points: 0 }] },
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      createLeagueSimulation({
+        ...input('PD'),
+        fixedContext: { laLigaFairPlay: [{ teamId: 999, rank: 1 }] },
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      createLeagueSimulation({
+        ...input('FL1'),
+        fixedContext: { ligue1Discipline: [{ teamId: 1, points: -1 }] },
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      createLeagueSimulation({
+        ...input('SA'),
+        fixedContext: { serieAUefaFinalistTeamIds: [999] },
+      }),
+    ).toThrow(RangeError);
+  });
+
+  it('copies inputs at preparation time and returns independent snapshots and forecasts', () => {
+    const source = input();
+    const baseline = source.baseline.map((row) => ({ ...row }));
+    const fixtures = source.fixtures.map((fixture) => ({ ...fixture }));
+    const seed: [number, number, number, number] = [...source.seed];
+    const job = createLeagueSimulation({ ...source, baseline, fixtures, seed })!;
+    baseline[0]!.points = 0;
+    fixtures[0] = {
+      id: 1,
+      homeTeamId: 1,
+      awayTeamId: 2,
+      kind: 'forecast',
+      homeRate90: 0,
+      awayRate90: 0,
+    };
+    seed.fill(0);
+    job.advance(4);
+    const expected = job.result()!;
+    const result = job.result()!;
+    expect(result.forecast.teams[0]!.expectedPoints).toBe(-97.5);
+    result.forecast.teams[0]!.expectedPoints = 999;
+    (result.inputSnapshot.fixtures as SeasonCalendarFixture[]).pop();
+    expect(job.result()).toEqual(expected);
+    expect(expected.inputSnapshot.seed).toEqual([1, 2, 3, 4]);
+    expect(expected.inputSnapshot.baseline[0]!.points).toBe(-100);
+    expect(expected.inputSnapshot.fixtures).toHaveLength(380);
+  });
+
+  it('accepts frozen input snapshots and returns independent unavailability diagnostics', () => {
+    const base = withPoints(input('FL1', 1, false), { 1: 0, 2: 0 });
+    for (const row of base.baseline) Object.freeze(row);
+    for (const fixture of base.fixtures) Object.freeze(fixture);
+    Object.freeze(base.baseline);
+    Object.freeze(base.fixtures);
+    Object.freeze(base.sampling);
+    Object.freeze(base.seed);
+    Object.freeze(base);
+    const job = createLeagueSimulation(base)!;
+    job.advance();
+    const expected = job.unavailability!;
+    const changed = job.unavailability!;
+    changed.groups[0]!.teamIds.push(999);
+    changed.run = 999;
+    expect(job.unavailability).toEqual(expected);
+    expect(job.unavailability!.groups[0]!.teamIds).toEqual([1, 2]);
+  });
+});

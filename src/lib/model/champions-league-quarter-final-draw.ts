@@ -18,6 +18,7 @@ const bands = [
   { seededPairStart: 1, opponentPairStart: 7 },
   { seededPairStart: 3, opponentPairStart: 5 },
 ] as const;
+export { bands as CHAMPIONS_LEAGUE_QUARTER_FINAL_BANDS };
 const sides = ['silver', 'blue'] as const;
 
 type RoundOf16Slot = Pick<ChampionsLeagueRoundOf16Tie, 'seededPairStart' | 'side'>;

@@ -45,7 +45,9 @@ export type ChampionsLeagueRoundOf16Preparation = ChampionsLeagueTwoLegPreparati
   ChampionsLeagueRoundOf16Sample
 >;
 
-function copyDrawMetadata(draw: Draw): DrawMetadata {
+export function copyChampionsLeagueRoundOf16DrawMetadata(
+  draw: DrawMetadata,
+): DrawMetadata {
   if (
     draw.algorithm !== CHAMPIONS_LEAGUE_ROUND_OF_16_DRAW_ALGORITHM ||
     draw.playOffDraw?.season !== draw.season
@@ -151,7 +153,7 @@ function copyTies(draw: Draw): ChampionsLeagueRoundOf16Tie[] {
 
 /** Validate and snapshot an existing draw in bracket slot order. */
 export function copyChampionsLeagueRoundOf16Draw(draw: Draw): Draw {
-  return { ...copyDrawMetadata(draw), ties: copyTies(draw) };
+  return { ...copyChampionsLeagueRoundOf16DrawMetadata(draw), ties: copyTies(draw) };
 }
 
 /**

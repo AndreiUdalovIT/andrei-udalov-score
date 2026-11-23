@@ -6,6 +6,12 @@ import {
   rankBundesligaSeason,
 } from './bundesliga-ranking';
 import {
+  createKnockoutSampler,
+  KNOCKOUT_SAMPLING_ALGORITHM,
+  type KnockoutLegInput,
+  type KnockoutSampler,
+} from './knockout-sampler';
+import {
   LA_LIGA_RANKING_ALGORITHM,
   rankLaLigaSeason,
   type LaLigaFairPlayRank,
@@ -51,12 +57,27 @@ import {
   type ProjectedSeasonStats,
 } from './season-stats';
 
-export const LEAGUE_SIMULATION_ALGORITHM = 'seeded-fixed-rate-league-simulation-v1';
+export const LEAGUE_SIMULATION_ALGORITHM = 'seeded-fixed-rate-league-simulation-v2';
+
+type PlayOffGoalRates = Readonly<{ homeRate90: number; awayRate90: number }>;
+
+export type SerieAPlayOffScenario = {
+  readonly higherTeamId: number;
+  readonly lowerTeamId: number;
+  readonly higherHome: PlayOffGoalRates;
+  /** Chance that the higher mini-table seed wins the shootout, if needed. */
+  readonly higherSeedShootoutWinProbability: number;
+} & (
+  | { readonly kind: 'title' }
+  | { readonly kind: 'survival'; readonly lowerHome: PlayOffGoalRates }
+);
 
 type FixedContext = {
   readonly laLigaFairPlay?: readonly Readonly<LaLigaFairPlayRank>[];
   readonly ligue1Discipline?: readonly Readonly<Ligue1DisciplinaryPoints>[];
   readonly serieAUefaFinalistTeamIds?: readonly number[] | null;
+  /** Forecast rates for the nominal venues of an ordered play-off pair. */
+  readonly serieAPlayOffScenarios?: readonly SerieAPlayOffScenario[];
 };
 
 export type LeagueSimulationInput = {
@@ -82,6 +103,7 @@ export type LeagueSimulationSnapshot = Omit<
     readonly laLigaFairPlay: readonly Readonly<LaLigaFairPlayRank>[];
     readonly ligue1Discipline: readonly Readonly<Ligue1DisciplinaryPoints>[];
     readonly serieAUefaFinalistTeamIds: readonly number[] | null;
+    readonly serieAPlayOffScenarios: readonly SerieAPlayOffScenario[];
   };
 };
 
@@ -93,7 +115,8 @@ export type LeagueSimulationUnavailability = {
   reason:
     | 'ranking-unavailable'
     | 'ranking-unresolved'
-    | 'serie-a-play-off-context-required';
+    | 'serie-a-play-off-context-required'
+    | 'serie-a-play-off-sampling-unavailable';
   groups: { from: number; to: number; teamIds: number[]; reason: string }[];
   playOffEvents: SerieAPlayOffEvent[];
 };
@@ -107,6 +130,7 @@ export type LeagueSimulationResult = {
     score: string;
     ranking: string;
     lots: typeof SEASON_LOTS_SAMPLING_ALGORITHM;
+    knockout: typeof KNOCKOUT_SAMPLING_ALGORITHM | null;
   };
   lotPolicy: 'simulate-eligible-uniform-lots';
   /** Truncated Poisson mass bounds, excluding numeric/RNG resolution and model error. */
@@ -132,6 +156,97 @@ const rankingAlgorithms: Partial<Record<SiteCompetitionCode, string>> = {
   SA: SERIE_A_RANKING_ALGORITHM,
   FL1: LIGUE1_RANKING_ALGORITHM,
 };
+
+function copySerieAPlayOffScenarios(
+  scenarios: readonly SerieAPlayOffScenario[],
+): SerieAPlayOffScenario[] {
+  function copyRates(rates: PlayOffGoalRates): PlayOffGoalRates {
+    if (rates == null) throw new RangeError('play-off goal rates are required');
+    return { homeRate90: rates.homeRate90, awayRate90: rates.awayRate90 };
+  }
+
+  return Array.from(scenarios, (scenario): SerieAPlayOffScenario => {
+    if (scenario == null)
+      throw new RangeError('play-off scenarios cannot contain missing rows');
+    const pair = {
+      higherTeamId: scenario.higherTeamId,
+      lowerTeamId: scenario.lowerTeamId,
+      higherHome: copyRates(scenario.higherHome),
+      higherSeedShootoutWinProbability: scenario.higherSeedShootoutWinProbability,
+    };
+    if (scenario.kind === 'title') return { ...pair, kind: 'title' };
+    if (scenario.kind === 'survival')
+      return { ...pair, kind: 'survival', lowerHome: copyRates(scenario.lowerHome) };
+    throw new RangeError('play-off scenarios must be title or survival');
+  }).sort(
+    (left, right) =>
+      Number(left.kind === 'survival') - Number(right.kind === 'survival') ||
+      left.higherTeamId - right.higherTeamId ||
+      left.lowerTeamId - right.lowerTeamId,
+  );
+}
+
+function playOffKey(
+  kind: SerieAPlayOffEvent['kind'],
+  higherTeamId: number,
+  lowerTeamId: number,
+): string {
+  return kind + ':' + higherTeamId + ':' + lowerTeamId;
+}
+
+function prepareSerieAPlayOffs(snapshot: LeagueSimulationSnapshot) {
+  const roster = new Set(snapshot.baseline.map((row) => row.teamId));
+  const samplers = new Map<string, KnockoutSampler | null>();
+  const tailByKind = { title: 0, survival: 0 };
+  for (const scenario of snapshot.fixedContext.serieAPlayOffScenarios) {
+    const { kind, higherTeamId, lowerTeamId, higherHome } = scenario;
+    const key = playOffKey(kind, higherTeamId, lowerTeamId);
+    if (
+      higherTeamId === lowerTeamId ||
+      !roster.has(higherTeamId) ||
+      !roster.has(lowerTeamId) ||
+      samplers.has(key)
+    ) {
+      throw new RangeError(
+        'play-off scenarios require distinct roster clubs and unique ordered pairs per kind',
+      );
+    }
+    const higherHomeLeg = {
+      kind: 'forecast' as const,
+      homeTeamId: higherTeamId,
+      awayTeamId: lowerTeamId,
+      ...higherHome,
+    };
+    const legs: KnockoutLegInput[] =
+      kind === 'title'
+        ? [{ ...higherHomeLeg, leg: 1 }]
+        : [
+            {
+              kind: 'forecast',
+              leg: 1,
+              homeTeamId: lowerTeamId,
+              awayTeamId: higherTeamId,
+              ...scenario.lowerHome,
+            },
+            { ...higherHomeLeg, leg: 2 },
+          ];
+    const sampler = createKnockoutSampler({
+      firstTeamId: higherTeamId,
+      secondTeamId: lowerTeamId,
+      legs,
+      extraTime: { kind: 'none' },
+      penalties: {
+        kind: 'forecast',
+        firstTeamWinProbability: scenario.higherSeedShootoutWinProbability,
+      },
+      sampling: snapshot.sampling,
+    });
+    samplers.set(key, sampler);
+    if (sampler !== null)
+      tailByKind[kind] = Math.max(tailByKind[kind], sampler.tailUpperBound);
+  }
+  return { samplers, tailUpperBound: tailByKind.title + tailByKind.survival };
+}
 
 function copyInput(input: LeagueSimulationInput): LeagueSimulationSnapshot {
   return {
@@ -184,6 +299,9 @@ function copyInput(input: LeagueSimulationInput): LeagueSimulationSnapshot {
       throw new RangeError('fixture kind must be known-result or forecast');
     }).sort((left, right) => left.id - right.id),
     fixedContext: {
+      serieAPlayOffScenarios: copySerieAPlayOffScenarios(
+        input.fixedContext?.serieAPlayOffScenarios ?? [],
+      ),
       laLigaFairPlay: Array.from(input.fixedContext?.laLigaFairPlay ?? [], (row) => {
         if (row === undefined || row === null)
           throw new RangeError('Fair Play cannot contain missing rows');
@@ -216,9 +334,14 @@ function copyInput(input: LeagueSimulationInput): LeagueSimulationSnapshot {
  * Each run samples the whole calendar by fixture ID, projects league stats, then
  * ranks the season. Only eligible modern Ligue 1 / Serie A lots use the same RNG
  * after calendar draws, in position order. Never randomize missing criteria.
+ * For Serie A, sample required title then survival play-offs after the lots.
+ * Only explicitly supplied rates/probabilities for the selected ordered pair
+ * are used, at nominal venues without extra time. A waiver consumes no RNG.
+ * These games resolve positions without adding to league stats. The truncation
+ * bound includes at most one title game and one survival series per run, using
+ * the largest sampler bound of each kind across supplied pairs.
  * Withhold the entire forecast at the first unresolved scenario. No runs are
- * skipped or resampled. Serie A games/shootouts are not sampled in this version;
- * required play-offs or missing finalist context stop with explicit diagnostics.
+ * skipped or resampled. Missing context and unavailable samplers are reported.
  * advance boundaries do not affect the RNG sequence. Cancellation is observed
  * between calls, allowing a server/Worker wrapper to schedule cooperative batches.
  * Invalid run control throws without changing the job. Unexpected run errors mark
@@ -262,11 +385,13 @@ export function createLeagueSimulation(
     (snapshot.competitionCode !== 'PD' && context.laLigaFairPlay.length > 0) ||
     (snapshot.competitionCode !== 'FL1' && context.ligue1Discipline.length > 0) ||
     (snapshot.competitionCode !== 'SA' &&
-      (context.serieAUefaFinalistTeamIds?.length ?? 0) > 0)
+      ((context.serieAUefaFinalistTeamIds?.length ?? 0) > 0 ||
+        context.serieAPlayOffScenarios.length > 0))
   )
     throw new RangeError('fixed final context must belong to the selected league');
 
   const calendar = createSeasonCalendarSampler(snapshot.fixtures, snapshot.sampling);
+  const serieAPlayOffs = prepareSerieAPlayOffs(snapshot);
   const previewScores: SeasonFixtureScore[] = snapshot.fixtures.map((fixture) => ({
     id: fixture.id,
     homeTeamId: fixture.homeTeamId,
@@ -305,13 +430,6 @@ export function createLeagueSimulation(
           snapshot.season,
           context.ligue1Discipline,
         );
-      case 'SA':
-        return rankSerieASeason(
-          rows,
-          scores,
-          snapshot.season,
-          context.serieAUefaFinalistTeamIds,
-        );
       default:
         return null;
     }
@@ -326,6 +444,11 @@ export function createLeagueSimulation(
         )
       : rank(preview, previewScores);
   if (previewRanking === null || calendar === null) return null;
+
+  const perRunTailUpperBound = Math.min(
+    1,
+    calendar.tailUpperBound + serieAPlayOffs.tailUpperBound,
+  );
 
   let phase: LeagueSimulation['status'] = 'ready';
   let unavailable: LeagueSimulationUnavailability | null = null;
@@ -371,22 +494,60 @@ export function createLeagueSimulation(
         eligible.length === 0
           ? null
           : createSeasonLotsSampler(eligible).sample(random);
-      const ranked = rankSerieASeason(
-        rows,
-        scores,
-        snapshot.season,
-        context.serieAUefaFinalistTeamIds,
-        lots,
+      const selected =
+        lots === null || plan.events.length === 0
+          ? plan
+          : planSerieAPlayOffs(
+              rows,
+              scores,
+              snapshot.season,
+              context.serieAUefaFinalistTeamIds,
+              lots,
+            );
+      if (selected === null) return pause('ranking-unavailable');
+
+      const playable: {
+        kind: SerieAPlayOffEvent['kind'];
+        sampler: KnockoutSampler;
+      }[] = [];
+      for (const event of selected.events) {
+        if (
+          event.selection === 'ordered-pair-known' &&
+          event.decision === 'classifica-avulsa-applies'
+        )
+          continue;
+        const selectedPair =
+          event.selection === 'ordered-pair-known' &&
+          event.decision === 'play-off-required';
+        const sampler = selectedPair
+          ? serieAPlayOffs.samplers.get(
+              playOffKey(
+                event.kind,
+                event.higherSlot.candidateTeamIds[0]!,
+                event.lowerSlot.candidateTeamIds[0]!,
+              ),
+            )
+          : undefined;
+        if (sampler === undefined)
+          return pause('serie-a-play-off-context-required', [], [event]);
+        if (sampler === null)
+          return pause('serie-a-play-off-sampling-unavailable', [], [event]);
+        playable.push({ kind: event.kind, sampler });
+      }
+      const outcomes = playable.map(({ kind, sampler }) => {
+        const { legs, shootout } = sampler.sample(random);
+        return { kind, legs, shootout };
+      });
+      return (
+        rankSerieASeason(
+          rows,
+          scores,
+          snapshot.season,
+          context.serieAUefaFinalistTeamIds,
+          lots,
+          outcomes,
+        ) ?? pause('ranking-unavailable')
       );
-      if (ranked !== null) return ranked;
-      const selected = planSerieAPlayOffs(
-        rows,
-        scores,
-        snapshot.season,
-        context.serieAUefaFinalistTeamIds,
-        lots,
-      );
-      return pause('serie-a-play-off-context-required', [], selected?.events ?? []);
     }
     let ranked = rank(rows, scores);
     if (ranked === null) return pause('ranking-unavailable');
@@ -465,11 +626,13 @@ export function createLeagueSimulation(
           score: calendar.scoreSamplingAlgorithm,
           ranking: rankingAlgorithm,
           lots: SEASON_LOTS_SAMPLING_ALGORITHM,
+          knockout:
+            serieAPlayOffs.samplers.size === 0 ? null : KNOCKOUT_SAMPLING_ALGORITHM,
         },
         lotPolicy: 'simulate-eligible-uniform-lots',
         samplingBounds: {
-          perRun: calendar.tailUpperBound,
-          allRuns: Math.min(1, calendar.tailUpperBound * snapshot.runs),
+          perRun: perRunTailUpperBound,
+          allRuns: Math.min(1, perRunTailUpperBound * snapshot.runs),
         },
         forecast,
       };

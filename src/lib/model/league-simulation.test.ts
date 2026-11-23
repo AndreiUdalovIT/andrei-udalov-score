@@ -3,11 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { getCompetitionSeasonConfig } from '@/lib/config/competition-seasons';
 import type { SiteCompetitionCode } from '@/lib/config/competitions';
 
+import { KNOCKOUT_SAMPLING_ALGORITHM } from './knockout-sampler';
 import {
   createLeagueSimulation,
   LEAGUE_SIMULATION_ALGORITHM,
   type LeagueSimulationInput,
+  type SerieAPlayOffScenario,
 } from './league-simulation';
+import { createPoissonScoreSampler } from './poisson-score-sampler';
 import type { SeasonCalendarFixture } from './season-calendar-sampler';
 import { SEEDED_RANDOM_ALGORITHM, type RandomSeed } from './seeded-random';
 import { projectSeasonStats } from './season-stats';
@@ -90,6 +93,23 @@ function withPoints(
   };
 }
 
+const titleScenario = {
+  kind: 'title',
+  higherTeamId: 2,
+  lowerTeamId: 1,
+  higherHome: { homeRate90: 0, awayRate90: 0 },
+  higherSeedShootoutWinProbability: 0,
+} as const satisfies SerieAPlayOffScenario;
+
+const survivalScenario = {
+  kind: 'survival',
+  higherTeamId: 18,
+  lowerTeamId: 17,
+  higherHome: { homeRate90: 0, awayRate90: 0 },
+  lowerHome: { homeRate90: 3, awayRate90: 0 },
+  higherSeedShootoutWinProbability: 1,
+} as const satisfies SerieAPlayOffScenario;
+
 describe('cooperative seeded league simulation', () => {
   it('matches fixture outcomes independently derived from C-reference random numerators', () => {
     const job = createLeagueSimulation(input())!;
@@ -101,7 +121,7 @@ describe('cooperative seeded league simulation', () => {
     expect(job.completedRuns).toBe(4);
     const result = job.result()!;
     expect(LEAGUE_SIMULATION_ALGORITHM).toBe(
-      'seeded-fixed-rate-league-simulation-v1',
+      'seeded-fixed-rate-league-simulation-v2',
     );
     expect(result.algorithm).toBe(LEAGUE_SIMULATION_ALGORITHM);
     expect(result.versions.random).toBe(SEEDED_RANDOM_ALGORITHM);
@@ -345,7 +365,10 @@ describe('cooperative seeded league simulation', () => {
     const base = withPoints(input('SA', 1, false), { 1: 0, 2: 0 });
     const job = createLeagueSimulation({
       ...base,
-      fixedContext: { serieAUefaFinalistTeamIds: [1] },
+      fixedContext: {
+        serieAUefaFinalistTeamIds: [1],
+        serieAPlayOffScenarios: [titleScenario],
+      },
     })!;
     job.advance();
     const result = job.result()!;
@@ -353,6 +376,189 @@ describe('cooperative seeded league simulation', () => {
     expect(result.forecast.teams[0]!.positionDistribution[1]!.count).toBe(1);
     expect(result.forecast.teams[1]!.positionDistribution[0]!.count).toBe(1);
     expect(result.inputSnapshot.fixedContext.serieAUefaFinalistTeamIds).toEqual([1]);
+  });
+
+  it('samples both Serie A play-offs after the lots and moves only their positions', () => {
+    const base = withPoints(input('SA', 1, false), {
+      1: 0,
+      2: 0,
+      17: -1700,
+      18: -1700,
+    });
+    const job = createLeagueSimulation({
+      ...base,
+      fixedContext: {
+        serieAUefaFinalistTeamIds: [],
+        serieAPlayOffScenarios: [
+          survivalScenario,
+          { ...titleScenario, higherHome: { homeRate90: 0.25, awayRate90: 0.25 } },
+        ],
+      },
+    })!;
+    job.advance();
+    const { forecast, versions, samplingBounds } = job.result()!;
+    expect(job.status).toBe('complete');
+    expect(versions.knockout).toBe(KNOCKOUT_SAMPLING_ALGORITHM);
+    // The first two even C-reference numerators swap both groups, so 2 and
+    // 18 are the higher seeds. Title is 0:0 and the lower seed wins penalties.
+    // The sixth reference uniform (~0.079) gives 1 home goal at rate 3:
+    // club 17 wins the first survival leg, then the reverse leg is 0:0.
+    for (const [teamId, place, points] of [
+      [1, 1, 0],
+      [2, 2, 0],
+      [17, 17, -1700],
+      [18, 18, -1700],
+    ] as const) {
+      const team = forecast.teams[teamId - 1]!;
+      expect(team.positionDistribution[place - 1]!.count).toBe(1);
+      expect(team.expectedPoints).toBe(points);
+    }
+    expect(
+      forecast.teams[16]!.zones.find(({ zone }) => zone === 'releg')!.count,
+    ).toBe(0);
+    expect(
+      forecast.teams[17]!.zones.find(({ zone }) => zone === 'releg')!.count,
+    ).toBe(1);
+    const bound =
+      createPoissonScoreSampler(0.25, 0.25, base.sampling)!.tailUpperBound +
+      createPoissonScoreSampler(3, 0, base.sampling)!.tailUpperBound;
+    expect(samplingBounds).toEqual({ perRun: bound, allRuns: bound });
+  });
+
+  it('replays a Serie A forecast across batches and keeps canonical scenario rates isolated', () => {
+    const base = withPoints(input('SA', 8, false), { 1: 0, 2: 0 });
+    const higherHome = { homeRate90: 0, awayRate90: 0 };
+    const otherOrder = {
+      ...titleScenario,
+      higherTeamId: 1,
+      lowerTeamId: 2,
+      higherHome: { homeRate90: 0.5, awayRate90: 0.5 },
+      higherSeedShootoutWinProbability: 0.4,
+    };
+    const firstPair = {
+      ...titleScenario,
+      higherHome,
+      higherSeedShootoutWinProbability: 0,
+    };
+    const serieAPlayOffScenarios = [firstPair, otherOrder];
+    const source = {
+      ...base,
+      fixedContext: { serieAUefaFinalistTeamIds: [], serieAPlayOffScenarios },
+    };
+    const single = createLeagueSimulation(source)!;
+    const batched = createLeagueSimulation({
+      ...source,
+      fixedContext: {
+        ...source.fixedContext,
+        serieAPlayOffScenarios: [...serieAPlayOffScenarios].reverse(),
+      },
+    })!;
+    higherHome.homeRate90 = 10;
+    firstPair.higherSeedShootoutWinProbability = 1;
+    serieAPlayOffScenarios.pop();
+    single.advance(8);
+    batched.advance(3);
+    batched.advance(5);
+    const result = single.result()!;
+    expect(batched.result()).toEqual(result);
+    expect(result.inputSnapshot.fixedContext.serieAPlayOffScenarios).toMatchObject([
+      { higherTeamId: 1, lowerTeamId: 2, higherHome: { homeRate90: 0.5 } },
+      {
+        higherTeamId: 2,
+        lowerTeamId: 1,
+        higherHome: { homeRate90: 0 },
+        higherSeedShootoutWinProbability: 0,
+      },
+    ]);
+    const replay = createLeagueSimulation(
+      JSON.parse(JSON.stringify(result.inputSnapshot)),
+    )!;
+    replay.advance(8);
+    expect(replay.result()).toEqual(result);
+    const bound = createPoissonScoreSampler(0.5, 0.5, base.sampling)!.tailUpperBound;
+    expect(result.samplingBounds).toEqual({ perRun: bound, allRuns: 8 * bound });
+  });
+
+  it('withholds the whole forecast when the second run needs an uncovered pair', () => {
+    const base = withPoints(input('SA', 3), { 1: 0, 2: 3 });
+    const job = createLeagueSimulation({
+      ...base,
+      fixedContext: { serieAUefaFinalistTeamIds: [] },
+    })!;
+    job.advance(3);
+    expect(job.status).toBe('unavailable');
+    expect(job.completedRuns).toBe(1);
+    expect(job.unavailability).toMatchObject({
+      run: 2,
+      reason: 'serie-a-play-off-context-required',
+      playOffEvents: [{ kind: 'title', decision: 'play-off-required' }],
+    });
+    expect(job.result()).toBeNull();
+  });
+
+  it('distinguishes a reversed seed order from a pair whose rates exceed the sampling budget', () => {
+    const base = withPoints(input('SA', 1, false), { 1: 0, 2: 0 });
+    const configurations = [
+      {
+        scenario: { ...titleScenario, higherTeamId: 1, lowerTeamId: 2 },
+        reason: 'serie-a-play-off-context-required',
+      },
+      {
+        scenario: {
+          ...titleScenario,
+          higherHome: { homeRate90: Number.MAX_VALUE, awayRate90: 1 },
+        },
+        reason: 'serie-a-play-off-sampling-unavailable',
+      },
+    ];
+    for (const { scenario, reason } of configurations) {
+      const job = createLeagueSimulation({
+        ...base,
+        fixedContext: {
+          serieAUefaFinalistTeamIds: [],
+          serieAPlayOffScenarios: [scenario],
+        },
+      })!;
+      job.advance();
+      expect(job.status).toBe('unavailable');
+      expect(job.unavailability).toMatchObject({
+        run: 1,
+        reason,
+        playOffEvents: [
+          {
+            kind: 'title',
+            higherSlot: { candidateTeamIds: [2] },
+            lowerSlot: { candidateTeamIds: [1] },
+          },
+        ],
+      });
+      expect(job.result()).toBeNull();
+    }
+  });
+
+  it('validates unused scenarios and rejects them for other leagues', () => {
+    const base = input('SA', 1, false);
+    const invalid = [
+      [titleScenario, titleScenario],
+      [{ ...titleScenario, lowerTeamId: 999 }],
+      [{ ...titleScenario, lowerTeamId: 2 }],
+      [{ ...titleScenario, higherSeedShootoutWinProbability: 1.1 }],
+      [{ ...titleScenario, higherHome: { homeRate90: -1, awayRate90: 0 } }],
+      [{ ...survivalScenario, lowerHome: { homeRate90: 0, awayRate90: NaN } }],
+    ];
+    for (const serieAPlayOffScenarios of invalid)
+      expect(() =>
+        createLeagueSimulation({
+          ...base,
+          fixedContext: { serieAPlayOffScenarios },
+        }),
+      ).toThrow(RangeError);
+    expect(() =>
+      createLeagueSimulation({
+        ...input('PL'),
+        fixedContext: { serieAPlayOffScenarios: [titleScenario] },
+      }),
+    ).toThrow(RangeError);
   });
 
   it.each([false, true])(

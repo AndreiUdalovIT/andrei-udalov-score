@@ -149,6 +149,11 @@ function copyTies(draw: Draw): ChampionsLeagueRoundOf16Tie[] {
   );
 }
 
+/** Validate and snapshot an existing draw in bracket slot order. */
+export function copyChampionsLeagueRoundOf16Draw(draw: Draw): Draw {
+  return { ...copyDrawMetadata(draw), ties: copyTies(draw) };
+}
+
 /**
  * Prepare a complete round of 16 under Articles 20–21 for an existing draw.
  * Matches supply explicit venues, regulation scores or rates, and any required
@@ -162,8 +167,7 @@ export function createChampionsLeagueRoundOf16Simulation(
   matches: readonly ChampionsLeagueRoundOf16MatchInputs[],
   sampling: Readonly<PoissonDistributionOptions>,
 ): ChampionsLeagueRoundOf16Preparation {
-  const drawMetadata = copyDrawMetadata(draw);
-  const ties = copyTies(draw);
+  const { ties, ...drawMetadata } = copyChampionsLeagueRoundOf16Draw(draw);
   const prepared = prepareChampionsLeagueTwoLegRound(
     ties.map((tie) => ({
       tie,

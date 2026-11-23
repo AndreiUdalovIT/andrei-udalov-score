@@ -121,7 +121,7 @@ describe('cooperative seeded league simulation', () => {
     expect(job.completedRuns).toBe(4);
     const result = job.result()!;
     expect(LEAGUE_SIMULATION_ALGORITHM).toBe(
-      'seeded-fixed-rate-league-simulation-v2',
+      'seeded-fixed-rate-league-simulation-v3',
     );
     expect(result.algorithm).toBe(LEAGUE_SIMULATION_ALGORITHM);
     expect(result.versions.random).toBe(SEEDED_RANDOM_ALGORITHM);
@@ -308,7 +308,9 @@ describe('cooperative seeded league simulation', () => {
   it('withholds the entire forecast when a later sampled run needs a Premier League play-off', () => {
     // Run 1 is 0:0 and keeps distinct points; run 2 is 1:0 and makes clubs 1/2
     // fully equal in the complete league and both direct criteria.
-    const job = createLeagueSimulation(withPoints(input(), { 1: 0, 2: 3 }))!;
+    const job = createLeagueSimulation(
+      withPoints(input(), { 1: 0, 2: 3, 8: -800, 9: -800 }),
+    )!;
     job.advance(100);
     expect(job.status).toBe('unavailable');
     expect(job.completedRuns).toBe(1);
@@ -325,18 +327,28 @@ describe('cooperative seeded league simulation', () => {
     expect(job.completedRuns).toBe(1);
   });
 
-  it('reports legitimate shared Premier League positions without randomizing them', () => {
-    const job = createLeagueSimulation(
-      withPoints(input('PL', 1, false), { 8: -800, 9: -800 }),
+  it('keeps a joint Premier League finish and the next distinct place in the forecast', () => {
+    const source = withPoints(input('PL', 2, false), { 8: -800, 9: -800 });
+    const job = createLeagueSimulation(source)!;
+    job.advance(2);
+    expect(job.status).toBe('complete');
+    expect(job.unavailability).toBeNull();
+    const { forecast, inputSnapshot } = job.result()!;
+    for (const teamId of [8, 9]) {
+      const team = forecast.teams[teamId - 1]!;
+      expect(team.positionDistribution[7]!.count).toBe(2);
+      expect(team.positionDistribution[8]!.count).toBe(0);
+      expect(team.sharedPositionDistribution).toEqual([
+        { from: 8, to: 9, count: 2, probability: 1 },
+      ]);
+    }
+    expect(forecast.teams[9]!.positionDistribution[9]!.count).toBe(2);
+    const replay = createLeagueSimulation(
+      JSON.parse(JSON.stringify(inputSnapshot)),
     )!;
-    job.advance();
-    expect(job.status).toBe('unavailable');
-    expect(job.unavailability!.groups[0]).toEqual({
-      from: 8,
-      to: 9,
-      teamIds: [8, 9],
-      reason: 'shared-position',
-    });
+    replay.advance();
+    replay.advance();
+    expect(replay.result()).toEqual(job.result());
   });
 
   it.each([

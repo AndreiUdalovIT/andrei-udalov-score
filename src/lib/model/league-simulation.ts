@@ -57,7 +57,7 @@ import {
   type ProjectedSeasonStats,
 } from './season-stats';
 
-export const LEAGUE_SIMULATION_ALGORITHM = 'seeded-fixed-rate-league-simulation-v2';
+export const LEAGUE_SIMULATION_ALGORITHM = 'seeded-fixed-rate-league-simulation-v3';
 
 type PlayOffGoalRates = Readonly<{ homeRate90: number; awayRate90: number }>;
 
@@ -341,7 +341,8 @@ function copyInput(input: LeagueSimulationInput): LeagueSimulationSnapshot {
  * bound includes at most one title game and one survival series per run, using
  * the largest sampler bound of each kind across supplied pairs.
  * Withhold the entire forecast at the first unresolved scenario. No runs are
- * skipped or resampled. Missing context and unavailable samplers are reported.
+ * skipped or resampled. A resolved Premier League shared position is retained
+ * as a tied finish. Missing context and unavailable samplers are reported.
  * advance boundaries do not affect the RNG sequence. Cancellation is observed
  * between calls, allowing a server/Worker wrapper to schedule cooperative batches.
  * Invalid run control throws without changing the job. Unexpected run errors mark
@@ -453,6 +454,13 @@ export function createLeagueSimulation(
   let phase: LeagueSimulation['status'] = 'ready';
   let unavailable: LeagueSimulationUnavailability | null = null;
 
+  function isUnresolvedGroup(group: RankingGroup): boolean {
+    return (
+      (group.teamIds.length !== 1 || group.from !== group.to) &&
+      !(snapshot.competitionCode === 'PL' && group.reason === 'shared-position')
+    );
+  }
+
   function pause(
     reason: LeagueSimulationUnavailability['reason'],
     groups: readonly RankingGroup[] = [],
@@ -462,14 +470,12 @@ export function createLeagueSimulation(
     unavailable = {
       run: accumulator!.completedRuns + 1,
       reason,
-      groups: groups
-        .filter((group) => group.teamIds.length !== 1 || group.from !== group.to)
-        .map((group) => ({
-          from: group.from,
-          to: group.to,
-          teamIds: [...group.teamIds],
-          reason: group.reason,
-        })),
+      groups: groups.filter(isUnresolvedGroup).map((group) => ({
+        from: group.from,
+        to: group.to,
+        teamIds: [...group.teamIds],
+        reason: group.reason,
+      })),
       playOffEvents: structuredClone([...events]),
     };
     return null;
@@ -570,9 +576,7 @@ export function createLeagueSimulation(
         if (ranked === null) return pause('ranking-unavailable');
       }
     }
-    return ranked.groups.some(
-      (group) => group.teamIds.length !== 1 || group.from !== group.to,
-    )
+    return ranked.groups.some(isUnresolvedGroup)
       ? pause('ranking-unresolved', ranked.groups)
       : ranked;
   }

@@ -31,6 +31,17 @@ function ranking(ids = ids20): LeagueForecastPositionGroup[] {
   }));
 }
 
+function rankingWithSharedRange(
+  from: number,
+  to: number,
+): LeagueForecastPositionGroup[] {
+  return [
+    ...ranking().slice(0, from - 1),
+    { from, to, teamIds: ids20.slice(from - 1, to), reason: 'shared-position' },
+    ...ranking().slice(to),
+  ];
+}
+
 function atPosition(teamId: number, position: number, ids = ids20): number[] {
   const ordered = [...ids];
   const previous = ordered.indexOf(teamId);
@@ -74,7 +85,7 @@ function completeLeague(teamCount: number) {
 describe('complete league forecast accumulation', () => {
   it('withholds a summary until exactly the requested number of runs', () => {
     const accumulator = createLeagueForecastAccumulator('PL', 2026, ids20, 2)!;
-    expect(accumulator.algorithm).toBe('complete-league-empirical-summary-v1');
+    expect(accumulator.algorithm).toBe('complete-league-empirical-summary-v2');
     expect(accumulator.algorithm).toBe(LEAGUE_FORECAST_ACCUMULATION_ALGORITHM);
     expect(accumulator.targetRuns).toBe(2);
     expect(accumulator.completedRuns).toBe(0);
@@ -329,7 +340,7 @@ describe('complete league forecast accumulation', () => {
 
   it.each([
     {
-      name: 'shared position range',
+      name: 'unlabelled position range',
       groups: [{ from: 1, to: 2, teamIds: [1, 2] }, ...ranking().slice(2)],
     },
     {
@@ -354,6 +365,96 @@ describe('complete league forecast accumulation', () => {
     expect(() => accumulator.addRun(points(), groups)).toThrow(RangeError);
     expect(accumulator.status).toBe('failed');
     expect(accumulator.summarize()).toBeNull();
+  });
+
+  it('counts joint finishes by rank and exact range while preserving zone mass', () => {
+    const accumulator = createLeagueForecastAccumulator('PL', 2026, ids20, 3)!;
+    accumulator.addRun(points(), ranking());
+    accumulator.addRun(points(), rankingWithSharedRange(2, 4).reverse());
+    accumulator.addRun(points(), rankingWithSharedRange(2, 3));
+    const summary = accumulator.summarize()!;
+    const second = summary.teams[1]!;
+    const third = summary.teams[2]!;
+    const fourth = summary.teams[3]!;
+    expect(second.positionDistribution[1]).toEqual({
+      position: 2,
+      count: 3,
+      probability: 1,
+    });
+    expect(third.positionDistribution.slice(1, 3).map(({ count }) => count)).toEqual(
+      [2, 1],
+    );
+    expect(
+      fourth.positionDistribution.slice(1, 4).map(({ count }) => count),
+    ).toEqual([1, 0, 2]);
+    expect(second.sharedPositionDistribution).toEqual([
+      { from: 2, to: 3, count: 1, probability: 1 / 3 },
+      { from: 2, to: 4, count: 1, probability: 1 / 3 },
+    ]);
+    expect(third.sharedPositionDistribution).toEqual(
+      second.sharedPositionDistribution,
+    );
+    expect(fourth.sharedPositionDistribution).toEqual([
+      { from: 2, to: 4, count: 1, probability: 1 / 3 },
+    ]);
+    for (const [index, team] of summary.teams.entries()) {
+      expect(
+        team.positionDistribution.reduce((sum, bin) => sum + bin.count, 0),
+      ).toBe(3);
+      expect(team.zones.find(({ zone }) => zone === 'ucl')!.count).toBe(
+        index < 4 ? 3 : 0,
+      );
+    }
+    second.sharedPositionDistribution[0]!.count = 999;
+    expect(
+      accumulator.summarize()!.teams[1]!.sharedPositionDistribution[0]!.count,
+    ).toBe(1);
+  });
+
+  it.each([
+    { season: 2026, from: 1, to: 2 },
+    { season: 2026, from: 4, to: 5 },
+    { season: 2026, from: 5, to: 6 },
+    { season: 2026, from: 17, to: 18 },
+    { season: 2024, from: 5, to: 6 },
+  ])(
+    'rejects a shared range crossing a title or zone boundary: %j',
+    ({ season, from, to }) => {
+      const accumulator = createLeagueForecastAccumulator('PL', season, ids20, 1)!;
+      expect(() =>
+        accumulator.addRun(points(), rankingWithSharedRange(from, to)),
+      ).toThrow(RangeError);
+      expect(accumulator.status).toBe('failed');
+    },
+  );
+
+  it('rejects inconsistent shared ranges and refuses them in other leagues', () => {
+    const shared = rankingWithSharedRange(8, 9);
+    expect(() =>
+      createLeagueForecastAccumulator('PD', 2026, ids20, 1)!.addRun(
+        points(),
+        shared,
+      ),
+    ).toThrow(RangeError);
+    const differentPoints = points().map((row) =>
+      row.teamId === 8 ? { ...row, points: 1 } : row,
+    );
+    expect(() =>
+      createLeagueForecastAccumulator('PL', 2026, ids20, 1)!.addRun(
+        differentPoints,
+        shared,
+      ),
+    ).toThrow(RangeError);
+
+    const overlap = shared.map((group) =>
+      group.from === 10 ? { ...group, from: 9, to: 9 } : group,
+    );
+    const accumulator = createLeagueForecastAccumulator('PL', 2026, ids20, 2)!;
+    accumulator.addRun(points(), shared);
+    expect(() => accumulator.addRun(points(), overlap)).toThrow(RangeError);
+    expect(accumulator.completedRuns).toBe(1);
+    expect(accumulator.summarize()).toBeNull();
+    expect(accumulator.status).toBe('failed');
   });
 
   it('refuses extra submissions without corrupting a complete forecast', () => {

@@ -51,7 +51,9 @@ export type ChampionsLeagueQuarterFinalPreparation =
     ChampionsLeagueQuarterFinalSample
   >;
 
-function copyDrawMetadata(draw: Draw): DrawMetadata {
+export function copyChampionsLeagueQuarterFinalDrawMetadata(
+  draw: DrawMetadata,
+): DrawMetadata {
   if (
     draw.algorithm !== CHAMPIONS_LEAGUE_QUARTER_FINAL_DRAW_ALGORITHM ||
     ![2024, 2025, 2026].includes(draw.season) ||
@@ -88,6 +90,22 @@ function copyDrawMetadata(draw: Draw): DrawMetadata {
   );
 }
 
+export function isChampionsLeagueRoundOf16WinnerPosition(
+  feeder: ChampionsLeagueQuarterFinalTie['first']['slot']['seededPairStart'],
+  position: number,
+): boolean {
+  const roundOf16Band = CHAMPIONS_LEAGUE_ROUND_OF_16_BANDS.find(
+    ({ seededPairStart }) => seededPairStart === feeder,
+  )!;
+  const playOffBand = CHAMPIONS_LEAGUE_PLAY_OFF_BANDS.find(
+    ({ seededPairStart }) =>
+      seededPairStart === roundOf16Band.playOffSeededPairStart,
+  )!;
+  return [feeder, playOffBand.seededPairStart, playOffBand.unseededPairStart].some(
+    (start) => position === start || position === start + 1,
+  );
+}
+
 function copyTies(draw: Draw): ChampionsLeagueQuarterFinalTie[] {
   if (draw.ties.length !== 4)
     throw new RangeError('Champions League quarter-finals require four ties');
@@ -120,24 +138,10 @@ function copyTies(draw: Draw): ChampionsLeagueQuarterFinalTie[] {
           'quarter-final entrants must retain their round-of-16 feeder slots',
         );
 
-      const roundOf16Band = CHAMPIONS_LEAGUE_ROUND_OF_16_BANDS.find(
-        ({ seededPairStart }) => seededPairStart === feeder,
-      )!;
-      const playOffBand = CHAMPIONS_LEAGUE_PLAY_OFF_BANDS.find(
-        ({ seededPairStart }) =>
-          seededPairStart === roundOf16Band.playOffSeededPairStart,
-      )!;
-      const starts = [
-        feeder,
-        playOffBand.seededPairStart,
-        playOffBand.unseededPairStart,
-      ];
       const club = winner.club;
       if (
         club == null ||
-        !starts.some(
-          (start) => club.position === start || club.position === start + 1,
-        ) ||
+        !isChampionsLeagueRoundOf16WinnerPosition(feeder, club.position) ||
         positions.has(club.position) ||
         !Number.isSafeInteger(club.teamId) ||
         club.teamId <= 0 ||
@@ -184,7 +188,10 @@ function copyTies(draw: Draw): ChampionsLeagueQuarterFinalTie[] {
 
 /** Validate and snapshot an existing quarter-final draw in bracket order. */
 export function copyChampionsLeagueQuarterFinalDraw(draw: Draw): Draw {
-  return { ...copyDrawMetadata(draw), ties: copyTies(draw) };
+  return {
+    ...copyChampionsLeagueQuarterFinalDrawMetadata(draw),
+    ties: copyTies(draw),
+  };
 }
 
 /**

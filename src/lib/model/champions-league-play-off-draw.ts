@@ -8,7 +8,7 @@ import {
 export const CHAMPIONS_LEAGUE_PLAY_OFF_DRAW_ALGORITHM =
   'ucl-play-off-ranked-bowls-v1';
 
-const bands = [
+export const CHAMPIONS_LEAGUE_PLAY_OFF_BANDS = [
   { seededPairStart: 9, unseededPairStart: 23 },
   { seededPairStart: 11, unseededPairStart: 21 },
   { seededPairStart: 13, unseededPairStart: 19 },
@@ -19,7 +19,8 @@ const bands = [
 const bowlOrder = [23, 21, 19, 17, 15, 13, 11, 9] as const;
 const sides = ['silver', 'blue'] as const;
 
-type SeededPairStart = (typeof bands)[number]['seededPairStart'];
+type SeededPairStart =
+  (typeof CHAMPIONS_LEAGUE_PLAY_OFF_BANDS)[number]['seededPairStart'];
 type BracketSide = (typeof sides)[number];
 type BracketClub = { teamId: number; position: number };
 type PlayOffBand = {
@@ -142,7 +143,7 @@ export function createChampionsLeaguePlayOffDraw(
   for (let position = 9; position <= 24; position += 1)
     if (!slots.has(position)) return null;
 
-  const candidates: PlayOffBand[] = bands.map(
+  const candidates: PlayOffBand[] = CHAMPIONS_LEAGUE_PLAY_OFF_BANDS.map(
     ({ seededPairStart, unseededPairStart }) => ({
       seededPairStart,
       seeded: [slots.get(seededPairStart)!, slots.get(seededPairStart + 1)!],
@@ -184,12 +185,19 @@ export function createChampionsLeaguePlayOffDraw(
       const orders = new Map(
         bowlOrder.map((start, index) => [start, lots.orders[index]!.teamIds]),
       );
-      const ties = bands.flatMap(({ seededPairStart, unseededPairStart }) =>
-        sides.map((side, index) => {
-          const seeded = clubById.get(orders.get(seededPairStart)![index]!)!;
-          const unseeded = clubById.get(orders.get(unseededPairStart)![index]!)!;
-          return buildTie(seededPairStart, side, seeded, unseeded, unseeded.teamId);
-        }),
+      const ties = CHAMPIONS_LEAGUE_PLAY_OFF_BANDS.flatMap(
+        ({ seededPairStart, unseededPairStart }) =>
+          sides.map((side, index) => {
+            const seeded = clubById.get(orders.get(seededPairStart)![index]!)!;
+            const unseeded = clubById.get(orders.get(unseededPairStart)![index]!)!;
+            return buildTie(
+              seededPairStart,
+              side,
+              seeded,
+              unseeded,
+              unseeded.teamId,
+            );
+          }),
       );
       return {
         algorithm: CHAMPIONS_LEAGUE_PLAY_OFF_DRAW_ALGORITHM,
@@ -207,7 +215,7 @@ export function createChampionsLeaguePlayOffDraw(
       if (
         typeof input.sourceReference !== 'string' ||
         input.sourceReference.trim() === '' ||
-        input.ties.length !== bands.length * sides.length
+        input.ties.length !== CHAMPIONS_LEAGUE_PLAY_OFF_BANDS.length * sides.length
       )
         throw new RangeError('official draw requires a source and all eight ties');
 

@@ -8,12 +8,12 @@ import {
   type SimulatedChampionsLeaguePlayOffDraw,
 } from './champions-league-play-off-draw';
 import {
-  createKnockoutSampler,
+  prepareChampionsLeagueTwoLegRound,
+  type ChampionsLeagueTwoLegMatchInputs,
+  type ChampionsLeagueTwoLegPreparation,
+} from './champions-league-two-leg-round';
+import {
   KNOCKOUT_SAMPLING_ALGORITHM,
-  type KnockoutExtraTimeInput,
-  type KnockoutLegInput,
-  type KnockoutPenaltiesInput,
-  type KnockoutSampler,
   type SampledKnockout,
 } from './knockout-sampler';
 import type { PoissonDistributionOptions } from './poisson-distribution';
@@ -29,14 +29,12 @@ type DrawMetadata =
 
 type PlayOffSlot = Pick<ChampionsLeaguePlayOffTie, 'seededPairStart' | 'side'>;
 
-export type ChampionsLeaguePlayOffMatchInputs = {
+export type ChampionsLeaguePlayOffMatchInputs = Omit<
+  ChampionsLeagueTwoLegMatchInputs,
+  'firstTeamId' | 'secondTeamId'
+> & {
   readonly seededTeamId: number;
   readonly unseededTeamId: number;
-  readonly legs: readonly KnockoutLegInput[];
-  /** Goals or rates for the 30 minutes at the return leg's venue. */
-  readonly extraTime: Exclude<KnockoutExtraTimeInput, { kind: 'none' }> | null;
-  /** A forecast probability refers to the seeded club. */
-  readonly penalties: KnockoutPenaltiesInput | null;
 };
 
 export type ChampionsLeaguePlayOffSample = {
@@ -47,28 +45,14 @@ export type ChampionsLeaguePlayOffSample = {
   ties: { tie: ChampionsLeaguePlayOffTie; result: SampledKnockout }[];
 };
 
-type BlockedTie = PlayOffSlot & {
-  reason:
-    'missing-match-inputs' | 'missing-extra-time' | 'knockout-sampler-unavailable';
-};
+export type ChampionsLeaguePlayOffPreparation = ChampionsLeagueTwoLegPreparation<
+  PlayOffSlot,
+  ChampionsLeaguePlayOffSample
+>;
 
-export type ChampionsLeaguePlayOffPreparation =
-  | {
-      readonly status: 'ready';
-      /** Union bound for this round, excluding numeric/RNG resolution and model error. */
-      readonly tailUpperBound: number;
-      readonly sample: (random: () => number) => ChampionsLeaguePlayOffSample;
-    }
-  | {
-      readonly status: 'unavailable';
-      readonly blockedTies: readonly BlockedTie[];
-    };
-
-function pairKey(seededTeamId: number, unseededTeamId: number) {
-  return seededTeamId + ':' + unseededTeamId;
-}
-
-function copyDrawMetadata(draw: Draw): DrawMetadata {
+export function copyChampionsLeaguePlayOffDrawMetadata(
+  draw: DrawMetadata,
+): DrawMetadata {
   const format = getCompetitionSeasonConfig('CL', draw.season);
   if (
     draw.algorithm !== CHAMPIONS_LEAGUE_PLAY_OFF_DRAW_ALGORITHM ||
@@ -182,96 +166,35 @@ export function createChampionsLeaguePlayOffSimulation(
   matches: readonly ChampionsLeaguePlayOffMatchInputs[],
   sampling: Readonly<PoissonDistributionOptions>,
 ): ChampionsLeaguePlayOffPreparation {
-  const drawMetadata = copyDrawMetadata(draw);
+  const drawMetadata = copyChampionsLeaguePlayOffDrawMetadata(draw);
   const ties = copyTies(draw);
-  const pairs = new Set(
-    ties.map((tie) => pairKey(tie.seeded.teamId, tie.unseeded.teamId)),
-  );
-  const byPair = new Map<string, ChampionsLeaguePlayOffMatchInputs>();
-  for (const match of matches) {
-    if (match == null)
-      throw new RangeError('play-off inputs cannot contain missing entries');
-    const key = pairKey(match.seededTeamId, match.unseededTeamId);
-    if (!pairs.has(key) || byPair.has(key))
-      throw new RangeError('play-off inputs must match unique ordered drawn pairs');
-    byPair.set(key, match);
-  }
-
-  const blockedTies: BlockedTie[] = [];
-  const prepared: { tie: ChampionsLeaguePlayOffTie; sampler: KnockoutSampler }[] =
-    [];
-  for (const tie of ties) {
-    const { seededPairStart, side } = tie;
-    const input = byPair.get(pairKey(tie.seeded.teamId, tie.unseeded.teamId));
-    if (input === undefined) {
-      blockedTies.push({ seededPairStart, side, reason: 'missing-match-inputs' });
-      continue;
-    }
-    const first = input.legs.find((leg) => leg?.leg === 1);
-    const second = input.legs.find((leg) => leg?.leg === 2);
-    if (
-      input.legs.length !== 2 ||
-      first === undefined ||
-      second === undefined ||
-      (tie.firstLegHomeTeamId !== null &&
-        first.homeTeamId !== tie.firstLegHomeTeamId)
-    )
-      throw new RangeError('each pair needs two legs in the drawn home order');
-    const extraTime: KnockoutExtraTimeInput = input.extraTime ?? { kind: 'none' };
-    if (input.extraTime !== null && extraTime.kind === 'none')
-      throw new RangeError('play-offs require extra time on a tied aggregate');
-    if (
-      (second.kind === 'known-result' && first.kind !== 'known-result') ||
-      (draw.source === 'simulated' &&
-        (first.kind === 'known-result' ||
-          second.kind === 'known-result' ||
-          extraTime.kind === 'known-result' ||
-          input.penalties?.kind === 'known-result'))
-    )
-      throw new RangeError(
-        'observed results require an official draw and chronological legs',
-      );
-
-    const sampler = createKnockoutSampler({
+  const prepared = prepareChampionsLeagueTwoLegRound(
+    ties.map((tie) => ({
+      tie,
+      slot: { seededPairStart: tie.seededPairStart, side: tie.side },
       firstTeamId: tie.seeded.teamId,
       secondTeamId: tie.unseeded.teamId,
-      legs: input.legs,
-      extraTime,
-      penalties: input.penalties ?? null,
-      sampling,
-    });
-    const mayTieAt90 =
-      first.kind !== 'known-result' ||
-      second.kind !== 'known-result' ||
-      first.homeGoals90 + second.awayGoals90 ===
-        first.awayGoals90 + second.homeGoals90;
-    if (input.extraTime === null && mayTieAt90)
-      blockedTies.push({ seededPairStart, side, reason: 'missing-extra-time' });
-    else if (sampler === null)
-      blockedTies.push({
-        seededPairStart,
-        side,
-        reason: 'knockout-sampler-unavailable',
-      });
-    else prepared.push({ tie, sampler });
-  }
-
-  if (blockedTies.length > 0) return { status: 'unavailable', blockedTies };
+      firstLegHomeTeamId: tie.firstLegHomeTeamId,
+    })),
+    Array.from(matches, (match) => {
+      if (match == null)
+        throw new RangeError('play-off inputs cannot contain missing entries');
+      const { seededTeamId, unseededTeamId, ...inputs } = match;
+      return { ...inputs, firstTeamId: seededTeamId, secondTeamId: unseededTeamId };
+    }),
+    draw.source,
+    sampling,
+  );
+  if (prepared.status === 'unavailable') return prepared;
   return {
     status: 'ready',
-    tailUpperBound: Math.min(
-      1,
-      prepared.reduce((sum, { sampler }) => sum + sampler.tailUpperBound, 0),
-    ),
+    tailUpperBound: prepared.tailUpperBound,
     sample(random) {
       return {
         algorithm: CHAMPIONS_LEAGUE_PLAY_OFF_SIMULATION_ALGORITHM,
         knockoutAlgorithm: KNOCKOUT_SAMPLING_ALGORITHM,
         draw: { ...drawMetadata },
-        ties: prepared.map(({ tie, sampler }) => ({
-          tie: structuredClone(tie),
-          result: sampler.sample(random),
-        })),
+        ties: prepared.sample(random),
       };
     },
   };

@@ -22,6 +22,7 @@ const bands = [
   { seededPairStart: 5, playOffSeededPairStart: 11 },
   { seededPairStart: 7, playOffSeededPairStart: 9 },
 ] as const;
+export { bands as CHAMPIONS_LEAGUE_ROUND_OF_16_BANDS };
 const bowlOrder = [...bands].reverse();
 const sides = ['silver', 'blue'] as const;
 

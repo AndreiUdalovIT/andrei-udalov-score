@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { getCompetitionSeasonConfig } from '@/lib/config/competition-seasons';
 import type { SiteCompetitionCode } from '@/lib/config/competitions';
 
+import { CHAMPIONS_LEAGUE_PHASE_RANKING_ALGORITHM } from './champions-league-phase-ranking';
 import { KNOCKOUT_SAMPLING_ALGORITHM } from './knockout-sampler';
 import {
   createLeagueSimulation,
@@ -80,6 +81,48 @@ function input(
   };
 }
 
+function championsLeagueInput(): LeagueSimulationInput {
+  const size = 36;
+  const teamIds = Array.from({ length: size }, (_, index) => index + 1);
+  const fixtures: SeasonCalendarFixture[] = teamIds.flatMap((homeTeamId) =>
+    [1, 2, 3, 4].map((offset): SeasonCalendarFixture => {
+      const identity = {
+        id: (homeTeamId - 1) * 4 + offset,
+        homeTeamId,
+        awayTeamId: ((homeTeamId - 1 + offset) % size) + 1,
+      };
+      return identity.id === 1
+        ? { ...identity, kind: 'forecast', homeRate90: 1.6, awayRate90: 0.8 }
+        : { ...identity, kind: 'known-result', homeGoals90: 1, awayGoals90: 0 };
+    }),
+  );
+  return {
+    modelVersion: 'poisson-test-v1',
+    dataCutoffMs: Date.UTC(2026, 10, 19),
+    seed: [1, 2, 3, 4],
+    runs: 4,
+    season: 2026,
+    sampling: { tailTolerance: 1e-10, maxGoals: 40 },
+    competitionCode: 'CL',
+    fixtures,
+    baseline: championsLeagueBaseline(fixtures),
+    fixedContext: {
+      championsLeagueTieBreaks: teamIds.map((teamId) => ({
+        teamId,
+        disciplinaryPoints: 0,
+        clubCoefficient: 37 - teamId,
+      })),
+    },
+  };
+}
+
+function championsLeagueBaseline(fixtures: readonly SeasonCalendarFixture[]) {
+  return baselineFromKnown(fixtures, 36).map((row) => ({
+    ...row,
+    points: row.won * 3 + row.draw,
+  }));
+}
+
 function withPoints(
   base: LeagueSimulationInput,
   values: Readonly<Record<number, number>>,
@@ -121,7 +164,7 @@ describe('cooperative seeded league simulation', () => {
     expect(job.completedRuns).toBe(4);
     const result = job.result()!;
     expect(LEAGUE_SIMULATION_ALGORITHM).toBe(
-      'seeded-fixed-rate-league-simulation-v3',
+      'seeded-fixed-rate-league-simulation-v4',
     );
     expect(result.algorithm).toBe(LEAGUE_SIMULATION_ALGORITHM);
     expect(result.versions.random).toBe(SEEDED_RANDOM_ALGORITHM);
@@ -638,7 +681,9 @@ describe('cooperative seeded league simulation', () => {
 
   it('returns null for unsupported formats, seasons and insufficient Poisson support', () => {
     const source = input();
-    expect(createLeagueSimulation({ ...source, competitionCode: 'CL' })).toBeNull();
+    expect(
+      createLeagueSimulation({ ...championsLeagueInput(), season: 2023 }),
+    ).toBeNull();
     expect(
       createLeagueSimulation({
         ...source,
@@ -652,6 +697,156 @@ describe('cooperative seeded league simulation', () => {
         sampling: { tailTolerance: 1e-12, maxGoals: 0 },
       }),
     ).toBeNull();
+  });
+
+  it('forecasts Champions League points, places and advancement over the remaining calendar', () => {
+    const source = championsLeagueInput();
+    const job = createLeagueSimulation(source)!;
+    expect(job.status).toBe('ready');
+    job.advance(4);
+    expect(job.status).toBe('complete');
+    const { forecast, versions, samplingBounds } = job.result()!;
+    expect(versions.ranking).toBe(CHAMPIONS_LEAGUE_PHASE_RANKING_ALGORITHM);
+    expect(versions.knockout).toBeNull();
+    expect(forecast.competitionCode).toBe('CL');
+    expect(forecast.teams).toHaveLength(36);
+    const [home, away] = forecast.teams;
+    // Python independently evaluated the C-reference draws and all standings:
+    // 0:0 -> places 36/1; 1:0 -> 1/2; 3:0 -> 1/36; 3:2 -> 2/1.
+    expect(home!.expectedPoints).toBe(11.5);
+    expect(away!.expectedPoints).toBe(12.25);
+    expect(home!.pointsInterval80).toEqual({ lower: 10, upper: 12 });
+    expect(away!.pointsInterval80).toEqual({ lower: 12, upper: 13 });
+    for (const team of [home!, away!]) {
+      expect(team.positionDistribution.filter(({ count }) => count > 0)).toEqual([
+        { position: 1, count: 2, probability: 0.5 },
+        { position: 2, count: 1, probability: 0.25 },
+        { position: 36, count: 1, probability: 0.25 },
+      ]);
+      expect(
+        team.zones.map(({ from, to, probability }) => [from, to, probability]),
+      ).toEqual([
+        [1, 8, 0.75],
+        [9, 24, 0],
+        [25, 36, 0.25],
+      ]);
+    }
+    expect(forecast.teams[2]!.expectedPoints).toBe(12);
+    expect(
+      forecast.teams[0]!.zones.map((_, index) =>
+        forecast.teams.reduce((sum, team) => sum + team.zones[index]!.count, 0),
+      ),
+    ).toEqual([32, 64, 48]);
+    expect(samplingBounds.perRun).toBeGreaterThan(0);
+    expect(samplingBounds.allRuns).toBe(4 * samplingBounds.perRun);
+  });
+
+  it('replays the Champions League forecast from a canonical fixed context', () => {
+    const source = championsLeagueInput();
+    const supplied = source.fixedContext!.championsLeagueTieBreaks!.map((row) => ({
+      ...row,
+    }));
+    const job = createLeagueSimulation({
+      ...source,
+      fixtures: [...source.fixtures].reverse(),
+      fixedContext: { championsLeagueTieBreaks: supplied.reverse() },
+    })!;
+    supplied[0]!.clubCoefficient = 999;
+    supplied.pop();
+    job.advance();
+    expect(job.status).toBe('running');
+    job.advance(3);
+    const first = job.result()!;
+    expect(first.inputSnapshot.fixedContext.championsLeagueTieBreaks).toEqual(
+      source.fixedContext!.championsLeagueTieBreaks,
+    );
+    const replay = createLeagueSimulation(
+      JSON.parse(JSON.stringify(first.inputSnapshot)),
+    )!;
+    replay.advance(4);
+    expect(replay.result()).toEqual(first);
+  });
+
+  it.each(['disciplinaryPoints', 'clubCoefficient'] as const)(
+    'identifies missing Champions League %s in a later tied run',
+    (criterion) => {
+      const source = championsLeagueInput();
+      const job = createLeagueSimulation({
+        ...source,
+        fixedContext: {
+          championsLeagueTieBreaks:
+            source.fixedContext!.championsLeagueTieBreaks!.map((row) =>
+              row.teamId === 1 ? { ...row, [criterion]: null } : row,
+            ),
+        },
+      })!;
+      // Team 1 is last outright after the first 0:0. After 1:0 all
+      // sporting criteria tie and a full ranking needs the missing input.
+      job.advance(4);
+      expect(job.status).toBe('unavailable');
+      expect(job.completedRuns).toBe(1);
+      expect(job.unavailability).toMatchObject({
+        run: 2,
+        reason: 'ranking-unresolved',
+        groups: [
+          {
+            from: 1,
+            to: 36,
+            reason: 'missing-criterion',
+            missingCriterion: criterion,
+          },
+        ],
+      });
+      expect(job.unavailability!.groups[0]!.teamIds).toHaveLength(36);
+      expect(job.result()).toBeNull();
+    },
+  );
+
+  it('rejects an incomplete or invalid Champions League calendar during preparation', () => {
+    const source = championsLeagueInput();
+    expect(
+      createLeagueSimulation({ ...source, fixtures: source.fixtures.slice(1) }),
+    ).toBeNull();
+    // Keep four home and away games for each team, but play 5 vs 2
+    // in addition to the existing 2 vs 5.
+    const fixtures = source.fixtures.map((fixture) => {
+      if (fixture.id === 1) return { ...fixture, awayTeamId: 6 };
+      if (fixture.id === 17) return { ...fixture, awayTeamId: 2 };
+      return fixture;
+    });
+    expect(
+      createLeagueSimulation({
+        ...source,
+        fixtures,
+        baseline: championsLeagueBaseline(fixtures),
+      }),
+    ).toBeNull();
+    const baseline = source.baseline.map((row) =>
+      row.teamId === 1 ? { ...row, points: row.points - 1 } : row,
+    );
+    expect(createLeagueSimulation({ ...source, baseline })).toBeNull();
+  });
+
+  it('validates supplied Champions League context during preparation', () => {
+    const source = championsLeagueInput();
+    for (const entry of [
+      { teamId: 999, disciplinaryPoints: 0, clubCoefficient: 1.125 },
+      { teamId: 1, disciplinaryPoints: -1, clubCoefficient: 1.125 },
+      { teamId: 1, disciplinaryPoints: 0, clubCoefficient: NaN },
+    ]) {
+      expect(() =>
+        createLeagueSimulation({
+          ...source,
+          fixedContext: { championsLeagueTieBreaks: [entry] },
+        }),
+      ).toThrow(RangeError);
+    }
+    expect(() =>
+      createLeagueSimulation({
+        ...input(),
+        fixedContext: source.fixedContext,
+      }),
+    ).toThrow(RangeError);
   });
 
   it('preflights known-result reconciliation and complete oriented pair coverage', () => {

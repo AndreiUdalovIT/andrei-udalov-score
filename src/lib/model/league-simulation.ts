@@ -6,6 +6,12 @@ import {
   rankBundesligaSeason,
 } from './bundesliga-ranking';
 import {
+  CHAMPIONS_LEAGUE_PHASE_RANKING_ALGORITHM,
+  rankChampionsLeaguePhase,
+  type ChampionsLeaguePhaseRanking,
+  type ChampionsLeaguePhaseTieBreakContext,
+} from './champions-league-phase-ranking';
+import {
   createKnockoutSampler,
   KNOCKOUT_SAMPLING_ALGORITHM,
   type KnockoutLegInput,
@@ -57,7 +63,7 @@ import {
   type ProjectedSeasonStats,
 } from './season-stats';
 
-export const LEAGUE_SIMULATION_ALGORITHM = 'seeded-fixed-rate-league-simulation-v3';
+export const LEAGUE_SIMULATION_ALGORITHM = 'seeded-fixed-rate-league-simulation-v4';
 
 type PlayOffGoalRates = Readonly<{ homeRate90: number; awayRate90: number }>;
 
@@ -73,6 +79,8 @@ export type SerieAPlayOffScenario = {
 );
 
 type FixedContext = {
+  /** Applicable club coefficients and explicit final disciplinary totals for CL. */
+  readonly championsLeagueTieBreaks?: readonly ChampionsLeaguePhaseTieBreakContext[];
   readonly laLigaFairPlay?: readonly Readonly<LaLigaFairPlayRank>[];
   readonly ligue1Discipline?: readonly Readonly<Ligue1DisciplinaryPoints>[];
   readonly serieAUefaFinalistTeamIds?: readonly number[] | null;
@@ -100,6 +108,7 @@ export type LeagueSimulationSnapshot = Omit<
   'fixedContext'
 > & {
   readonly fixedContext: {
+    readonly championsLeagueTieBreaks: readonly ChampionsLeaguePhaseTieBreakContext[];
     readonly laLigaFairPlay: readonly Readonly<LaLigaFairPlayRank>[];
     readonly ligue1Discipline: readonly Readonly<Ligue1DisciplinaryPoints>[];
     readonly serieAUefaFinalistTeamIds: readonly number[] | null;
@@ -107,7 +116,13 @@ export type LeagueSimulationSnapshot = Omit<
   };
 };
 
-type RankingGroup = LeagueForecastPositionGroup & { readonly reason: string };
+type MissingCriterion = NonNullable<
+  ChampionsLeaguePhaseRanking['groups'][number]['missingCriterion']
+>;
+type RankingGroup = LeagueForecastPositionGroup & {
+  readonly reason: string;
+  readonly missingCriterion?: MissingCriterion | null;
+};
 type Ranking = { algorithm: string; groups: readonly RankingGroup[] };
 
 export type LeagueSimulationUnavailability = {
@@ -117,7 +132,13 @@ export type LeagueSimulationUnavailability = {
     | 'ranking-unresolved'
     | 'serie-a-play-off-context-required'
     | 'serie-a-play-off-sampling-unavailable';
-  groups: { from: number; to: number; teamIds: number[]; reason: string }[];
+  groups: {
+    from: number;
+    to: number;
+    teamIds: number[];
+    reason: string;
+    missingCriterion?: MissingCriterion;
+  }[];
   playOffEvents: SerieAPlayOffEvent[];
 };
 
@@ -155,6 +176,7 @@ const rankingAlgorithms: Partial<Record<SiteCompetitionCode, string>> = {
   BL1: BUNDESLIGA_RANKING_ALGORITHM,
   SA: SERIE_A_RANKING_ALGORITHM,
   FL1: LIGUE1_RANKING_ALGORITHM,
+  CL: CHAMPIONS_LEAGUE_PHASE_RANKING_ALGORITHM,
 };
 
 function copySerieAPlayOffScenarios(
@@ -299,6 +321,20 @@ function copyInput(input: LeagueSimulationInput): LeagueSimulationSnapshot {
       throw new RangeError('fixture kind must be known-result or forecast');
     }).sort((left, right) => left.id - right.id),
     fixedContext: {
+      championsLeagueTieBreaks: Array.from(
+        input.fixedContext?.championsLeagueTieBreaks ?? [],
+        (row) => {
+          if (row == null)
+            throw new RangeError(
+              'Champions League tie-breaks cannot contain missing rows',
+            );
+          return {
+            teamId: row.teamId,
+            disciplinaryPoints: row.disciplinaryPoints,
+            clubCoefficient: row.clubCoefficient,
+          };
+        },
+      ).sort((left, right) => left.teamId - right.teamId),
       serieAPlayOffScenarios: copySerieAPlayOffScenarios(
         input.fixedContext?.serieAPlayOffScenarios ?? [],
       ),
@@ -329,8 +365,11 @@ function copyInput(input: LeagueSimulationInput): LeagueSimulationSnapshot {
  * Prepare a seed-reproducible, cooperatively stepped league simulation.
  * Copy/canonicalize its complete input snapshot; keep fixture rates, official
  * adjustments and explicitly supplied final-context assumptions fixed across runs.
- * Preflight known-result reconciliation and oriented pair coverage without RNG:
- * zero-goal placeholders for future fixtures are used only for these checks.
+ * Preflight known-result reconciliation and the selected format's complete
+ * calendar without RNG. Future score placeholders are used only for these checks.
+ * For CL, rank the standard league phase with each opponent's projected final
+ * totals and the supplied fixed tie-break context. Zones describe advancement
+ * from this phase; the knockout stage is a separate calculation.
  * Each run samples the whole calendar by fixture ID, projects league stats, then
  * ranks the season. Only eligible modern Ligue 1 / Serie A lots use the same RNG
  * after calendar draws, in position order. Never randomize missing criteria.
@@ -383,6 +422,8 @@ export function createLeagueSimulation(
   )!;
   const context = snapshot.fixedContext;
   if (
+    (snapshot.competitionCode !== 'CL' &&
+      context.championsLeagueTieBreaks.length > 0) ||
     (snapshot.competitionCode !== 'PD' && context.laLigaFairPlay.length > 0) ||
     (snapshot.competitionCode !== 'FL1' && context.ligue1Discipline.length > 0) ||
     (snapshot.competitionCode !== 'SA' &&
@@ -404,7 +445,8 @@ export function createLeagueSimulation(
   const preview = projectSeasonStats(snapshot.baseline, previewScores);
   if (
     preview === null ||
-    reconcileRoundRobinSeason(preview, previewScores, config) === null
+    (config.format === 'round-robin' &&
+      reconcileRoundRobinSeason(preview, previewScores, config) === null)
   )
     return null;
 
@@ -415,6 +457,13 @@ export function createLeagueSimulation(
     switch (snapshot.competitionCode) {
       case 'PL':
         return rankPremierLeagueSeason(rows, scores, snapshot.season);
+      case 'CL':
+        return rankChampionsLeaguePhase(
+          rows,
+          scores,
+          snapshot.season,
+          context.championsLeagueTieBreaks,
+        );
       case 'BL1':
         return rankBundesligaSeason(rows, scores, snapshot.season);
       case 'PD':
@@ -475,6 +524,9 @@ export function createLeagueSimulation(
         to: group.to,
         teamIds: [...group.teamIds],
         reason: group.reason,
+        ...(group.missingCriterion == null
+          ? {}
+          : { missingCriterion: group.missingCriterion }),
       })),
       playOffEvents: structuredClone([...events]),
     };

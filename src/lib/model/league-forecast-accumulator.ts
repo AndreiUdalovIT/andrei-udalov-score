@@ -86,8 +86,9 @@ function empiricalQuantile(
 
 /**
  * Accumulate a fixed number of complete league scenarios, without sampling them.
- * Support configured site round-robin leagues; return null for other formats or
- * unconfigured seasons. Validate a fixed positive safe-integer roster and run count.
+ * Support configured site round-robin leagues and the Champions League league
+ * phase. Return null for unsupported formats/seasons. Validate a fixed positive
+ * safe-integer roster and run count.
  * Each run must contain every club once, safe integer points (including deductions),
  * and disjoint ranges that cover the entire table. The only non-singleton groups
  * accepted are Premier League shared positions with equal points outside title
@@ -123,7 +124,12 @@ export function createLeagueForecastAccumulator(
   }
   if (!siteCompetitionCodes.includes(competitionCode)) return null;
   const config = getCompetitionSeasonConfig(competitionCode, season);
-  if (config === undefined || config.format !== 'round-robin') return null;
+  if (
+    config === undefined ||
+    (config.format !== 'round-robin' &&
+      !(competitionCode === 'CL' && config.format === 'league-phase'))
+  )
+    return null;
   const teamCount = config.teamCount;
   if (!Number.isSafeInteger(teamCount) || teamCount < 2) {
     throw new RangeError(

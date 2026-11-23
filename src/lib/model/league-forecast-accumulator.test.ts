@@ -488,13 +488,34 @@ describe('complete league forecast accumulation', () => {
     );
   });
 
-  it('validates seasons and limits support to configured site round-robin leagues', () => {
+  it('counts the Champions League phase zones at positions 8/9 and 24/25', () => {
+    const clubIds = Array.from({ length: 36 }, (_, index) => index + 1);
+    const accumulator = createLeagueForecastAccumulator('CL', 2026, clubIds, 1)!;
+    accumulator.addRun(points(clubIds), ranking(clubIds));
+    const { teams } = accumulator.summarize()!;
+    expect(teams).toHaveLength(36);
+    for (const [teamId, zone] of [
+      [8, 0],
+      [9, 1],
+      [24, 1],
+      [25, 2],
+    ] as const) {
+      const team = teams[teamId - 1]!;
+      expect(team.zones.map(({ count }) => count)).toEqual(
+        [0, 1, 2].map((index) => Number(index === zone)),
+      );
+    }
+  });
+
+  it('validates seasons and rejects unsupported forecast formats', () => {
     expect(() => createLeagueForecastAccumulator('PL', 2026.5, ids20, 1)).toThrow(
       RangeError,
     );
     expect(createLeagueForecastAccumulator('PL', 2027, ids20, 1)).toBeNull();
     expect(createLeagueForecastAccumulator('CL', 2023, ids20, 1)).toBeNull();
-    expect(createLeagueForecastAccumulator('CL', 2026, ids20, 1)).toBeNull();
+    expect(() => createLeagueForecastAccumulator('CL', 2026, ids20, 1)).toThrow(
+      RangeError,
+    );
     expect(
       createLeagueForecastAccumulator('ELC' as SiteCompetitionCode, 2026, ids20, 1),
     ).toBeNull();

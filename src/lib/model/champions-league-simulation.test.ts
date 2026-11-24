@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { createChampionsLeagueKnockoutMatchProviders } from '@/server/forecasts/champions-league-match-providers';
+import type { ChampionsLeagueKnockoutObservation } from '@/server/forecasts/load-knockout-observations';
+
 import {
   CHAMPIONS_LEAGUE_FORECAST_ALGORITHM,
   createChampionsLeagueForecast,
@@ -17,6 +20,8 @@ import type { ChampionsLeagueTwoLegMatchInputs } from './champions-league-two-le
 import type { SeasonCalendarFixture } from './season-calendar-sampler';
 import { projectSeasonStats } from './season-stats';
 import { SEEDED_RANDOM_ALGORITHM } from './seeded-random';
+
+vi.mock('server-only', () => ({}));
 
 const seed = [1, 2, 3, 4] as const;
 const anotherSeed = [11, 12, 13, 14] as const;
@@ -643,5 +648,251 @@ describe('Champions League multi-run forecast', () => {
     expect(forecast.status).toBe('failed');
     expect(forecast.completedRuns).toBe(0);
     expect(forecast.result()).toBeNull();
+  });
+});
+
+describe('Champions League inputs linked to stored fixtures', () => {
+  const dataCutoffMs = Date.parse('2026-11-12T00:00:00Z');
+  const day = 86_400_000;
+
+  function observationScenario() {
+    const data = input(2024);
+    const scenario = complete(createChampionsLeagueSimulation(data).sample(seed));
+    const officialDraws = recordedDraws(scenario);
+    const official = complete(
+      createChampionsLeagueSimulation({
+        ...data,
+        officialDraws,
+      }).sample(seed),
+    );
+    const groups = [
+      ['PLAYOFFS', official.playOff.ties],
+      ['LAST_16', official.roundOf16.ties],
+      ['QUARTER_FINALS', official.quarterFinals.ties],
+      ['SEMI_FINALS', official.semiFinals.ties],
+      ['FINAL', [official.final]],
+    ] as const;
+    let matchId = 4000;
+    const observations: ChampionsLeagueKnockoutObservation[] = groups.flatMap(
+      ([stage, ties], index) =>
+        ties.flatMap(({ result }) =>
+          result.legs.map((leg) => {
+            const kickoff = dataCutoffMs - (6 - index) * 7 * day + leg.leg * day;
+            const reverse = stage === 'FINAL';
+            const homeTeamId = reverse ? leg.awayTeamId : leg.homeTeamId;
+            const awayTeamId = reverse ? leg.homeTeamId : leg.awayTeamId;
+            return {
+              matchId: ++matchId,
+              stage,
+              utcDate: new Date(kickoff),
+              observedAt: new Date(kickoff + day / 4),
+              status: 'FINISHED' as const,
+              homeTeamId,
+              awayTeamId,
+              result: {
+                regulation: {
+                  kind: 'known-result' as const,
+                  homeTeamId,
+                  awayTeamId,
+                  homeGoals90: reverse ? leg.awayGoals90 : leg.homeGoals90,
+                  awayGoals90: reverse ? leg.homeGoals90 : leg.awayGoals90,
+                },
+                extraTime: null,
+                penalties: null,
+              },
+            };
+          }),
+        ),
+    );
+
+    const penalties = { kind: 'forecast', firstTeamWinProbability: 1 } as const;
+    const forecasts = {
+      leg: vi.fn(() => ({
+        homeRate90: 0,
+        awayRate90: 0,
+        extraTime: { kind: 'forecast', homeRate30: 0, awayRate30: 0 } as const,
+        penalties,
+      })),
+      final: vi.fn(() => ({
+        regulation: {
+          kind: 'forecast',
+          silverNeutralRate90: 0,
+          blueNeutralRate90: 0,
+        } as const,
+        extraTime: {
+          kind: 'forecast',
+          silverNeutralRate30: 0,
+          blueNeutralRate30: 0,
+        } as const,
+        penalties,
+      })),
+    };
+    return { data, official, officialDraws, observations, forecasts };
+  }
+
+  it('replays every official stage, including a recorded shootout and a reversed final feed', () => {
+    const { data, official, officialDraws, observations, forecasts } =
+      observationScenario();
+    const [first, second] = observations;
+    const winnerTeamId = official.playOff.ties[0]!.result.winnerTeamId;
+    for (const fixture of [first!, second!]) {
+      fixture.result!.regulation = {
+        ...fixture.result!.regulation,
+        homeGoals90: 0,
+        awayGoals90: 0,
+      };
+    }
+    second!.result!.extraTime = {
+      kind: 'known-result',
+      homeGoals30: 0,
+      awayGoals30: 0,
+    };
+    second!.result!.penalties = { kind: 'known-result', winnerTeamId };
+
+    const simulation = createChampionsLeagueSimulation({
+      ...data,
+      officialDraws,
+      matches: createChampionsLeagueKnockoutMatchProviders({
+        season: data.season,
+        dataCutoffMs,
+        observations,
+        forecasts,
+      }),
+    });
+    const sample = complete(simulation.sample(anotherSeed));
+
+    expect(sample.playOff.ties[0]?.result).toMatchObject({
+      winnerTeamId,
+      method: 'penalties',
+      shootout: { winnerTeamId, source: 'known-result' },
+    });
+    expect(sample.roundOf16).toEqual(official.roundOf16);
+    expect(sample.quarterFinals).toEqual(official.quarterFinals);
+    expect(sample.semiFinals).toEqual(official.semiFinals);
+    expect(sample.final).toEqual(official.final);
+    expect(forecasts.leg).not.toHaveBeenCalled();
+    expect(forecasts.final).not.toHaveBeenCalled();
+  });
+
+  it('forecasts only the return leg of an official tie at its recorded venue', () => {
+    const { data, officialDraws, observations, forecasts } = observationScenario();
+    const [first, second] = observations;
+    second!.status = 'TIMED';
+    second!.utcDate = new Date(dataCutoffMs + day);
+    second!.result = null;
+    const matches = createChampionsLeagueKnockoutMatchProviders({
+      season: data.season,
+      dataCutoffMs,
+      observations,
+      forecasts,
+    });
+
+    const sample = complete(
+      createChampionsLeagueSimulation({
+        ...data,
+        officialDraws: { playOff: officialDraws.playOff },
+        matches,
+      }).sample(seed),
+    );
+
+    expect(sample.playOff.ties[0]?.result.legs).toMatchObject([
+      { source: 'known-result', homeTeamId: first!.homeTeamId },
+      {
+        source: 'simulated',
+        homeTeamId: second!.homeTeamId,
+        awayTeamId: second!.awayTeamId,
+      },
+    ]);
+    expect(forecasts.leg).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: 'PLAYOFFS',
+        leg: 2,
+        homeTeamId: second!.homeTeamId,
+        awayTeamId: second!.awayTeamId,
+      }),
+    );
+    expect(forecasts.leg).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: 'PLAYOFFS',
+        leg: 1,
+      }),
+    );
+  });
+
+  it.each(['missing', 'started', 'inconsistent'] as const)(
+    'withholds an official tie with %s fixture inputs',
+    (reason) => {
+      const { data, officialDraws, observations, forecasts } = observationScenario();
+      const [first, second] = observations;
+      if (reason === 'missing') observations.splice(1, 1);
+      if (reason === 'started') {
+        second!.status = 'TIMED';
+        second!.utcDate = new Date(dataCutoffMs);
+        second!.result = null;
+      }
+      if (reason === 'inconsistent') {
+        for (const fixture of [first!, second!]) {
+          fixture.result!.regulation = {
+            ...fixture.result!.regulation,
+            homeGoals90: 0,
+            awayGoals90: 0,
+          };
+        }
+      }
+      const matches = createChampionsLeagueKnockoutMatchProviders({
+        season: data.season,
+        dataCutoffMs,
+        observations,
+        forecasts,
+      });
+
+      expect(
+        createChampionsLeagueSimulation({
+          ...data,
+          officialDraws: { playOff: officialDraws.playOff },
+          matches,
+        }).sample(seed),
+      ).toMatchObject({
+        status: 'unavailable',
+        stage: 'play-off',
+        blockedTies: [expect.objectContaining({ reason: 'missing-match-inputs' })],
+      });
+      expect(forecasts.leg).not.toHaveBeenCalled();
+    },
+  );
+
+  it('uses explicit forecast rates throughout a scenario draw', () => {
+    const { data, observations, forecasts } = observationScenario();
+    const matches = createChampionsLeagueKnockoutMatchProviders({
+      season: data.season,
+      dataCutoffMs,
+      observations,
+      forecasts,
+    });
+
+    const sample = complete(
+      createChampionsLeagueSimulation({ ...data, matches }).sample(seed),
+    );
+    expect(sample.playOff.ties[0]?.result.legs).toMatchObject([
+      { source: 'simulated' },
+      { source: 'simulated' },
+    ]);
+    expect(sample.final.result).toEqual(
+      complete(createChampionsLeagueSimulation(data).sample(seed)).final.result,
+    );
+  });
+
+  it('rejects observed scores from the cutoff or later', () => {
+    const { data, observations, forecasts } = observationScenario();
+    observations[0]!.observedAt = new Date(dataCutoffMs);
+
+    expect(() =>
+      createChampionsLeagueKnockoutMatchProviders({
+        season: data.season,
+        dataCutoffMs,
+        observations,
+        forecasts,
+      }),
+    ).toThrow(RangeError);
   });
 });

@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  CHAMPIONS_LEAGUE_FORECAST_ALGORITHM,
+  createChampionsLeagueForecast,
+  type ChampionsLeagueForecastInput,
+} from './champions-league-forecast';
+
+import {
   CHAMPIONS_LEAGUE_SIMULATION_ALGORITHM,
   createChampionsLeagueSimulation,
   type ChampionsLeagueMatchProviders,
@@ -428,5 +434,214 @@ describe('Champions League season scenario', () => {
     sampling.maxGoals = 0;
     expect(simulation.sample(seed)).toEqual(original);
     expect(playOff).toHaveBeenCalledOnce();
+  });
+});
+
+function forecastInput(
+  data: ChampionsLeagueSimulationInput,
+  runs = 6,
+): ChampionsLeagueForecastInput {
+  return {
+    ...data,
+    seed,
+    runs,
+    modelVersion: 'test-model-v1',
+    dataCutoffMs: Date.UTC(2026, 10, 23),
+  };
+}
+
+describe('Champions League multi-run forecast', () => {
+  it('replays the same probabilities and bounds across different batch sizes', () => {
+    const data = forecastInput(input(2026, true));
+    const all = createChampionsLeagueForecast(data)!;
+    const batches = createChampionsLeagueForecast(data)!;
+    expect(batches.status).toBe('ready');
+    expect(batches.result()).toBeNull();
+    batches.advance();
+    expect(batches.status).toBe('running');
+    expect(batches.completedRuns).toBe(1);
+    expect(batches.result()).toBeNull();
+    batches.advance(2);
+    batches.advance(100);
+    all.advance(data.runs);
+    const result = batches.result()!;
+    expect(batches.status).toBe('complete');
+    expect(batches.completedRuns).toBe(data.runs);
+    expect(result).toEqual(all.result());
+    expect(result).toMatchObject({
+      algorithm: CHAMPIONS_LEAGUE_FORECAST_ALGORITHM,
+      inputSnapshot: {
+        seed,
+        runs: data.runs,
+        modelVersion: data.modelVersion,
+        dataCutoffMs: data.dataCutoffMs,
+      },
+      versions: {
+        random: SEEDED_RANDOM_ALGORITHM,
+        simulation: CHAMPIONS_LEAGUE_SIMULATION_ALGORITHM,
+      },
+    });
+    expect(result.inputSnapshot).not.toHaveProperty('matches');
+    expect(result.samplingBounds.perRun).toBeGreaterThan(0);
+    expect(result.samplingBounds.allRuns).toBeCloseTo(
+      result.samplingBounds.perRun * data.runs,
+      15,
+    );
+    expect(result.teams.map(({ teamId }) => teamId)).toEqual(
+      Array.from({ length: 36 }, (_, i) => i + 1),
+    );
+    for (const [event, teams] of [
+      ['playOff', 16],
+      ['directRoundOf16', 8],
+      ['roundOf16', 16],
+      ['quarterFinals', 8],
+      ['semiFinals', 4],
+      ['final', 2],
+      ['champion', 1],
+    ] as const) {
+      expect(
+        result.teams.reduce((sum, team) => sum + team.events[event].count, 0),
+      ).toBe(teams * data.runs);
+      for (const team of result.teams)
+        expect(team.events[event].probability).toBe(
+          team.events[event].count / data.runs,
+        );
+    }
+    for (const team of result.teams) {
+      const {
+        directRoundOf16,
+        playOff,
+        roundOf16,
+        quarterFinals,
+        semiFinals,
+        final,
+        champion,
+      } = team.events;
+      expect(directRoundOf16.count + playOff.count).toBeLessThanOrEqual(data.runs);
+      expect(roundOf16.count).toBeGreaterThanOrEqual(directRoundOf16.count);
+      expect(roundOf16.count).toBeLessThanOrEqual(
+        directRoundOf16.count + playOff.count,
+      );
+      expect(quarterFinals.count).toBeLessThanOrEqual(roundOf16.count);
+      expect(semiFinals.count).toBeLessThanOrEqual(quarterFinals.count);
+      expect(final.count).toBeLessThanOrEqual(semiFinals.count);
+      expect(champion.count).toBeLessThanOrEqual(final.count);
+    }
+    result.teams[0]!.events.champion.count = 9999;
+    batches.advance(10);
+    expect(batches.result()).toEqual(all.result());
+  });
+
+  it('counts observed titles and keeps irrelevant ties among eliminated teams', () => {
+    const base = input(2024);
+    const data = {
+      ...base,
+      tieBreakContext: base.tieBreakContext!.map((entry) =>
+        entry.teamId >= 35 ? { ...entry, clubCoefficient: 0 } : entry,
+      ),
+    };
+    const scenario = complete(createChampionsLeagueSimulation(data).sample(seed));
+    expect(scenario.leaguePhase.ranking.groups.at(-1)).toMatchObject({
+      from: 35,
+      to: 36,
+    });
+    const forecast = createChampionsLeagueForecast(
+      forecastInput(
+        {
+          ...data,
+          officialDraws: recordedDraws(scenario),
+        },
+        4,
+      ),
+    )!;
+    forecast.advance(4);
+    const result = forecast.result()!;
+    expect(result.samplingBounds).toEqual({ perRun: 0, allRuns: 0 });
+    const team = result.teams.find(
+      ({ teamId }) => teamId === scenario.final.result.winnerTeamId,
+    )!;
+    expect(team.events.champion).toEqual({ count: 4, probability: 1 });
+    expect(team.events.final).toEqual({ count: 4, probability: 1 });
+    for (const eliminated of result.teams.slice(-2))
+      expect(
+        Object.values(eliminated.events).every(({ count }) => count === 0),
+      ).toBe(true);
+  });
+
+  it('stops at an unavailable run and returns the seed needed to replay it', () => {
+    const data = input();
+    const final = vi
+      .fn<ChampionsLeagueMatchProviders['final']>(() => null)
+      .mockImplementationOnce(matches.final);
+    const forecast = createChampionsLeagueForecast(
+      forecastInput(
+        {
+          ...data,
+          matches: { ...matches, final },
+        },
+        4,
+      ),
+    )!;
+    forecast.advance(4);
+    expect(forecast.status).toBe('unavailable');
+    expect(forecast.completedRuns).toBe(1);
+    expect(forecast.result()).toBeNull();
+    const diagnostic = forecast.unavailability!;
+    expect(diagnostic).toMatchObject({
+      run: 2,
+      stage: 'final',
+      reason: 'missing-match-inputs',
+    });
+    const replay = createChampionsLeagueSimulation({
+      ...data,
+      matches: { ...matches, final: () => null },
+    }).sample(diagnostic.seed);
+    expect(replay).toMatchObject({
+      status: 'unavailable',
+      stage: 'final',
+      reason: 'missing-match-inputs',
+    });
+    forecast.advance(4);
+    expect(final).toHaveBeenCalledTimes(2);
+  });
+
+  it('cancels a batch without counting its unfinished scenario', () => {
+    const data = input();
+    const final: ChampionsLeagueMatchProviders['final'] = (fixture) => {
+      forecast.cancel();
+      return matches.final(fixture);
+    };
+    const forecast = createChampionsLeagueForecast(
+      forecastInput(
+        {
+          ...data,
+          matches: { ...matches, final },
+        },
+        2,
+      ),
+    )!;
+    forecast.advance(2);
+    expect(forecast.status).toBe('cancelled');
+    expect(forecast.completedRuns).toBe(0);
+    expect(forecast.result()).toBeNull();
+  });
+
+  it('marks a failed forecast when a match provider throws', () => {
+    const data = input();
+    const forecast = createChampionsLeagueForecast(
+      forecastInput({
+        ...data,
+        matches: {
+          ...matches,
+          final: () => {
+            throw new Error('provider failed');
+          },
+        },
+      }),
+    )!;
+    expect(() => forecast.advance()).toThrow('provider failed');
+    expect(forecast.status).toBe('failed');
+    expect(forecast.completedRuns).toBe(0);
+    expect(forecast.result()).toBeNull();
   });
 });

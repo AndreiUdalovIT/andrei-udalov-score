@@ -10,7 +10,10 @@ import { createLeagueSimulation } from '@/lib/model/league-simulation';
 import { projectSeasonStats } from '@/lib/model/season-stats';
 
 import * as schema from '../db/schema';
-import { loadLeagueForecastInput } from './load-league-input';
+import {
+  loadChampionsLeaguePhaseInput,
+  loadLeagueForecastInput,
+} from './load-league-input';
 
 const state = vi.hoisted(() => ({
   database: null as PgliteDatabase<typeof schema> | null,
@@ -308,5 +311,178 @@ describe('loadLeagueForecastInput', () => {
         seed,
       }),
     ).rejects.toThrow(RangeError);
+  });
+});
+
+describe('loadChampionsLeaguePhaseInput', () => {
+  const championsLeagueId = 2001;
+  const clubs = Array.from({ length: 36 }, (_, index) => index + 1);
+  const phase = 'LEAGUE_STAGE';
+  const future = new Set([5001, 5126]);
+  const phaseFixtures = clubs.flatMap((homeTeamId) =>
+    [1, 2, 3, 4].map((distance) => ({
+      id: 5000 + (homeTeamId - 1) * 4 + distance,
+      homeTeamId,
+      awayTeamId: ((homeTeamId - 1 + distance) % clubs.length) + 1,
+      homeGoals90: (homeTeamId + distance) % 4,
+      awayGoals90: distance % 3,
+    })),
+  );
+  const phaseMatches: MatchInsert[] = phaseFixtures.map((fixture) => {
+    const scheduled = future.has(fixture.id);
+    return {
+      ...fixture,
+      competitionId: championsLeagueId,
+      season,
+      stage: phase,
+      status: scheduled ? 'TIMED' : 'FINISHED',
+      utcDate: scheduled ? upcomingDate : matchDate,
+      lastUpdated: matchUpdatedAt,
+      duration: 'REGULAR',
+      homeGoals90: scheduled ? null : fixture.homeGoals90,
+      awayGoals90: scheduled ? null : fixture.awayGoals90,
+    };
+  });
+  const phaseTable = projectSeasonStats(
+    clubs.map((teamId) => ({ ...withoutResults[0]!, teamId })),
+    phaseFixtures
+      .filter((fixture) => !future.has(fixture.id))
+      .map((fixture) => ({ ...fixture, source: 'simulated' })),
+  )!.map((row, index) => ({
+    ...row,
+    stage: phase,
+    group: null,
+    position: index + 1,
+  }));
+
+  beforeAll(async () => {
+    await database.insert(schema.competitions).values({
+      id: championsLeagueId,
+      code: 'CL',
+      name: 'Champions League',
+    });
+    await database.insert(schema.teams).values(
+      clubs.slice(teamIds.length).map((id) => ({
+        id,
+        name: 'Club ' + id,
+        shortName: 'Club ' + id,
+        tla: 'T' + id,
+      })),
+    );
+    await database.insert(schema.matches).values(phaseMatches);
+  });
+
+  beforeEach(async () => {
+    await database.insert(schema.matchObservations).values(
+      phaseMatches.map(({ id, ...match }) => ({
+        ...match,
+        matchId: id,
+        observedAt: capturedAt,
+        source: 'change' as const,
+      })),
+    );
+  });
+
+  function savePhaseTable(rows = phaseTable) {
+    return saveTable({ competitionId: championsLeagueId, rows });
+  }
+
+  function loadPhase() {
+    return loadChampionsLeaguePhaseInput(season, { before, seed });
+  }
+
+  it('builds the 36-team league phase using stored results and model rates', async () => {
+    await savePhaseTable();
+    await saveTable({
+      competitionId: championsLeagueId,
+      rows: [],
+      capturedAt: before,
+    });
+
+    const result = await loadPhase();
+    expect(result.status).toBe('ready');
+    if (result.status !== 'ready') throw new Error('phase input unavailable');
+
+    expect(result.input).toMatchObject({
+      competitionCode: 'CL',
+      season,
+      dataCutoffMs: before.getTime(),
+      seed,
+    });
+    expect(result.input.baseline).toHaveLength(36);
+    expect(result.input.fixtures).toHaveLength(144);
+    expect(result.input.fixtures.find(({ id }) => id === 5002)).toMatchObject({
+      kind: 'known-result',
+      homeGoals90: 3,
+      awayGoals90: 2,
+    });
+    expect(result.input.fixtures.filter(({ kind }) => kind === 'forecast')).toEqual([
+      {
+        id: 5001,
+        kind: 'forecast',
+        homeTeamId: 1,
+        awayTeamId: 2,
+        homeRate90: expect.any(Number),
+        awayRate90: expect.any(Number),
+      },
+      {
+        id: 5126,
+        kind: 'forecast',
+        homeTeamId: 32,
+        awayTeamId: 34,
+        homeRate90: expect.any(Number),
+        awayRate90: expect.any(Number),
+      },
+    ]);
+    expect(createLeagueSimulation({ ...result.input, runs: 1 })).not.toBeNull();
+  });
+
+  it('withholds a calendar with repeated opponents even with balanced venues', async () => {
+    await savePhaseTable();
+    await database
+      .update(schema.matchObservations)
+      .set({ awayTeamId: 34 })
+      .where(eq(schema.matchObservations.matchId, 5001));
+    await database
+      .update(schema.matchObservations)
+      .set({ awayTeamId: 2 })
+      .where(eq(schema.matchObservations.matchId, 5126));
+
+    expect(await loadPhase()).toEqual({
+      status: 'unavailable',
+      reason: 'incomplete-calendar',
+    });
+  });
+
+  it('withholds a complete fixture count with an unbalanced home schedule', async () => {
+    await savePhaseTable();
+    await database
+      .update(schema.matchObservations)
+      .set({ homeTeamId: 10 })
+      .where(eq(schema.matchObservations.matchId, 5001));
+
+    expect(await loadPhase()).toEqual({
+      status: 'unavailable',
+      reason: 'incomplete-calendar',
+    });
+  });
+
+  it('reports unsupported point adjustments in the official league phase table', async () => {
+    await savePhaseTable(
+      phaseTable.map((row) =>
+        row.teamId === 1 ? { ...row, points: row.points - 1 } : row,
+      ),
+    );
+
+    expect(await loadPhase()).toEqual({
+      status: 'unavailable',
+      reason: 'table-result-mismatch',
+    });
+  });
+
+  it('leaves the older group format unsupported', async () => {
+    await expect(
+      loadChampionsLeaguePhaseInput(2023, { before, seed }),
+    ).resolves.toEqual({ status: 'unsupported' });
   });
 });

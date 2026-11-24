@@ -5,11 +5,15 @@ import { and, desc, eq, lt } from 'drizzle-orm';
 import { getCompetitionSeasonConfig } from '@/lib/config/competition-seasons';
 import type { SiteCompetitionCode } from '@/lib/config/competitions';
 import { predictionModelConfig } from '@/lib/config/model-predictions';
+import { rankChampionsLeaguePhase } from '@/lib/model/champions-league-phase-ranking';
 import { calculateExpectedGoals } from '@/lib/model/expected-goals';
 import type { LeagueSimulationInput } from '@/lib/model/league-simulation';
 import { selectTrainingMatches } from '@/lib/model/matches';
 import { isPrematchFixture } from '@/lib/model/prediction-eligibility';
-import type { SeasonCalendarFixture } from '@/lib/model/season-calendar-sampler';
+import type {
+  SeasonCalendarFixture,
+  SeasonFixtureScore,
+} from '@/lib/model/season-calendar-sampler';
 import type { RandomSeed } from '@/lib/model/seeded-random';
 import { projectSeasonStats } from '@/lib/model/season-stats';
 
@@ -18,6 +22,7 @@ import { competitions, standingsSnapshots } from '../db/schema';
 import { loadObservedCompetitionStrengthSnapshot } from '../queries/strengths';
 
 type LeagueForecastInput = Omit<LeagueSimulationInput, 'runs'>;
+type LeagueForecastInputOptions = Readonly<{ before: Date; seed: RandomSeed }>;
 type FixtureIdentity = Pick<
   SeasonCalendarFixture,
   'id' | 'homeTeamId' | 'awayTeamId'
@@ -63,21 +68,40 @@ async function loadOfficialTable(
   }
 }
 
-/**
- * Prepare an observed domestic league snapshot for the server or local simulator.
- * Keep official point adjustments and require a complete, reconciled calendar.
- */
-export async function loadLeagueForecastInput(
+/** Prepare an observed domestic calendar, retaining official point adjustments. */
+export function loadLeagueForecastInput(
   competitionCode: SiteCompetitionCode,
   season: number,
-  { before, seed }: Readonly<{ before: Date; seed: RandomSeed }>,
+  options: LeagueForecastInputOptions,
+): Promise<LeagueForecastInputResult> {
+  return loadObservedLeagueTableInput(
+    competitionCode,
+    season,
+    options,
+    'round-robin',
+  );
+}
+
+/** Prepare the observed calendar and table for the Champions League league phase. */
+export function loadChampionsLeaguePhaseInput(
+  season: number,
+  options: LeagueForecastInputOptions,
+): Promise<LeagueForecastInputResult> {
+  return loadObservedLeagueTableInput('CL', season, options, 'league-phase');
+}
+
+async function loadObservedLeagueTableInput(
+  competitionCode: SiteCompetitionCode,
+  season: number,
+  { before, seed }: LeagueForecastInputOptions,
+  format: 'round-robin' | 'league-phase',
 ): Promise<LeagueForecastInputResult> {
   const dataCutoffMs = before.getTime();
   if (!Number.isFinite(dataCutoffMs) || dataCutoffMs > Date.now())
     throw new RangeError('season forecast requires a valid cutoff at or before now');
 
   const config = getCompetitionSeasonConfig(competitionCode, season);
-  if (config?.format !== 'round-robin') return { status: 'unsupported' };
+  if (config?.format !== format) return { status: 'unsupported' };
 
   const cutoff = new Date(dataCutoffMs);
   const savedSeed: RandomSeed = [...seed];
@@ -155,13 +179,34 @@ export async function loadLeagueForecastInput(
     }
   }
 
+  const scores: SeasonFixtureScore[] = known.map((score) => ({
+    ...score,
+    source: 'known-result',
+  }));
+  if (format === 'league-phase') {
+    // Use score placeholders to validate the shape of the complete phase calendar.
+    scores.push(
+      ...upcoming.map((fixture) => ({
+        ...fixture,
+        source: 'simulated' as const,
+        homeGoals90: 0,
+        awayGoals90: 0,
+      })),
+    );
+  }
+  const projected = projectSeasonStats(baseline, scores);
   if (
-    projectSeasonStats(
-      baseline,
-      known.map((score) => ({ ...score, source: 'known-result' })),
-    ) === null
+    projected === null ||
+    (format === 'league-phase' &&
+      projected.some((row) => row.pointsAdjustment !== 0))
   ) {
     return { status: 'unavailable', reason: 'table-result-mismatch' };
+  }
+  if (
+    format === 'league-phase' &&
+    rankChampionsLeaguePhase(projected, scores, season) === null
+  ) {
+    return { status: 'unavailable', reason: 'incomplete-calendar' };
   }
 
   const { strengths } = snapshot;

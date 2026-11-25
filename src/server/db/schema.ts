@@ -16,7 +16,6 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 
-import type { ChampionsLeagueForecastResult } from '@/lib/model/champions-league-forecast';
 import type { ExpectedGoals } from '@/lib/model/expected-goals';
 import type { LeagueSimulationResult } from '@/lib/model/league-simulation';
 import type { MatchProbabilities } from '@/lib/model/match-probabilities';
@@ -24,6 +23,8 @@ import type { PoissonDistributionOptions } from '@/lib/model/poisson-distributio
 import type { PromotionAdjustmentOptions } from '@/lib/model/promotion-adjustment';
 import type { RandomSeed } from '@/lib/model/seeded-random';
 import type { MatchDuration, MatchStatus } from '@/lib/types/football';
+
+import type { StoredChampionsLeagueForecast } from '../forecasts/champions-league-knockout-snapshot';
 
 export const competitions = pgTable('competitions', {
   id: integer().primaryKey(),
@@ -259,7 +260,7 @@ export const seasonForecasts = pgTable(
     seed: bigint({ mode: 'number' }).array(4).$type<RandomSeed>().notNull(),
     runs: integer().notNull(),
     forecast: jsonb()
-      .$type<LeagueSimulationResult | ChampionsLeagueForecastResult>()
+      .$type<LeagueSimulationResult | StoredChampionsLeagueForecast>()
       .notNull(),
   },
   (t) => [

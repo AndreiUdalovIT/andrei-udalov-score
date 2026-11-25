@@ -5,6 +5,7 @@ import { sql } from 'drizzle-orm';
 
 import type { SiteCompetitionCode } from '@/lib/config/competitions';
 import {
+  CHAMPIONS_LEAGUE_FORECAST_ALGORITHM,
   createChampionsLeagueForecast,
   type ChampionsLeagueForecastInput,
   type ChampionsLeagueForecastUnavailability,
@@ -22,6 +23,11 @@ import {
   type SeasonForecastKind,
 } from '../db/schema';
 
+import {
+  restoreChampionsLeagueForecastInput,
+  type ReplayableChampionsLeagueInput,
+} from './champions-league-knockout-snapshot';
+
 export const DEFAULT_SEASON_FORECAST_RUNS = 10_000;
 const runsPerBatch = 100;
 
@@ -36,7 +42,9 @@ export type SeasonForecastRequest =
     }
   | {
       readonly kind: 'champions-league-stages';
-      readonly input: WithOptionalRuns<ChampionsLeagueForecastInput>;
+      readonly input:
+        | WithOptionalRuns<ChampionsLeagueForecastInput>
+        | WithOptionalRuns<ReplayableChampionsLeagueInput>;
     };
 
 export type SeasonForecastStorageResult =
@@ -119,13 +127,23 @@ export async function calculateAndStoreSeasonForecast(
   if (request.input.dataCutoffMs > Date.now())
     throw new RangeError('season forecast cutoff must not be in the future');
 
-  const kind = request.kind;
-  const competitionCode =
-    request.kind === 'league-table' ? request.input.competitionCode : 'CL';
-  const job =
-    request.kind === 'league-table'
-      ? createLeagueSimulation({ ...request.input, runs })
-      : createChampionsLeagueForecast({ ...request.input, runs });
+  const { kind, input } = request;
+  const competitionCode = kind === 'league-table' ? input.competitionCode : 'CL';
+  let job:
+    | ReturnType<typeof createLeagueSimulation>
+    | ReturnType<typeof createChampionsLeagueForecast>;
+  let knockoutSnapshot:
+    ReplayableChampionsLeagueInput['knockoutSnapshot'] | undefined;
+  if (kind === 'league-table') {
+    job = createLeagueSimulation({ ...input, runs });
+  } else if ('knockoutSnapshot' in input) {
+    knockoutSnapshot = structuredClone(input.knockoutSnapshot);
+    job = createChampionsLeagueForecast(
+      restoreChampionsLeagueForecastInput({ ...input, knockoutSnapshot, runs }),
+    );
+  } else {
+    job = createChampionsLeagueForecast({ ...input, runs });
+  }
   if (job === null) return { status: 'unsupported' };
 
   while (job.status === 'ready' || job.status === 'running') {
@@ -137,5 +155,12 @@ export async function calculateAndStoreSeasonForecast(
   if (detail !== null) return { status: 'unavailable', detail };
   const result = job.result();
   if (result === null) throw new Error('season forecast did not complete');
-  return storeForecast(competitionCode, kind, result);
+  return storeForecast(
+    competitionCode,
+    kind,
+    knockoutSnapshot !== undefined &&
+      result.algorithm === CHAMPIONS_LEAGUE_FORECAST_ALGORITHM
+      ? { ...result, knockoutSnapshot }
+      : result,
+  );
 }

@@ -5,6 +5,10 @@ import { migrate } from 'drizzle-orm/pglite/migrator';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  CHAMPIONS_LEAGUE_FORECAST_ALGORITHM,
+  createChampionsLeagueForecast,
+} from '@/lib/model/champions-league-forecast';
 import type { ChampionsLeagueMatchProviders } from '@/lib/model/champions-league-simulation';
 import type { ChampionsLeagueTwoLegMatchInputs } from '@/lib/model/champions-league-two-leg-round';
 import type { SeasonCalendarFixture } from '@/lib/model/season-calendar-sampler';
@@ -12,6 +16,13 @@ import { projectSeasonStats } from '@/lib/model/season-stats';
 
 import * as schema from '../db/schema';
 import { calculateAndStoreSeasonForecast } from './calculate-and-store';
+import { calculateChampionsLeagueForecast } from './calculate-champions-league-forecast';
+import { restoreChampionsLeagueForecastInput } from './champions-league-knockout-snapshot';
+import {
+  loadChampionsLeagueKnockoutObservations,
+  type ChampionsLeagueKnockoutObservation,
+} from './load-knockout-observations';
+import { loadChampionsLeaguePhaseInput } from './load-league-input';
 
 const testState = vi.hoisted(() => ({
   database: null as PgliteDatabase<typeof schema> | null,
@@ -19,6 +30,10 @@ const testState = vi.hoisted(() => ({
 }));
 
 vi.mock('server-only', () => ({}));
+vi.mock('./load-league-input', () => ({ loadChampionsLeaguePhaseInput: vi.fn() }));
+vi.mock('./load-knockout-observations', () => ({
+  loadChampionsLeagueKnockoutObservations: vi.fn(),
+}));
 vi.mock('../db/client', async () => {
   const { drizzle: neonDrizzle } = await import('drizzle-orm/neon-http');
   const tables = await import('../db/schema');
@@ -355,6 +370,184 @@ describe('calculate and store season forecasts', () => {
         input: { ...request.input, dataCutoffMs: Date.now() + 60_000 },
       }),
     ).rejects.toThrow(/cutoff must not be in the future/);
+    expect(await forecasts()).toEqual([]);
+  });
+});
+
+describe('calculateChampionsLeagueForecast', () => {
+  const loadPhase = vi.mocked(loadChampionsLeaguePhaseInput);
+  const loadKnockout = vi.mocked(loadChampionsLeagueKnockoutObservations);
+  const before = new Date('2026-11-12T00:00:00.000Z');
+
+  function phaseInput() {
+    const { season, modelVersion, sampling, baseline, fixtures, tieBreakContext } =
+      championsLeagueRequest().input;
+    const venue = {
+      matchCount: 4,
+      effectiveMatchCount: 4,
+      attack: 1,
+      defence: 1,
+      lowData: false,
+    };
+    return {
+      phase: {
+        status: 'ready' as const,
+        knockoutStrengths: {
+          league: {
+            matchCount: fixtures.length,
+            effectiveMatchCount: fixtures.length,
+            homeGoalsPerMatch: 1.4,
+            awayGoalsPerMatch: 0.9,
+          },
+          teams: baseline.map(({ teamId }) => ({
+            teamId,
+            home: venue,
+            away: venue,
+          })),
+        },
+        input: {
+          competitionCode: 'CL' as const,
+          season,
+          modelVersion,
+          dataCutoffMs: before.getTime(),
+          seed,
+          sampling,
+          baseline,
+          fixtures,
+        },
+      },
+      options: { before, seed, runs: 3, tieBreakContext },
+    };
+  }
+
+  function finalPlaceholder(): ChampionsLeagueKnockoutObservation {
+    return {
+      matchId: 678,
+      stage: 'FINAL',
+      utcDate: new Date('2027-05-29T20:00:00.000Z'),
+      observedAt: new Date(before.getTime() - 1),
+      status: 'SCHEDULED',
+      homeTeamId: null,
+      awayTeamId: null,
+      result: null,
+    };
+  }
+
+  beforeEach(() => {
+    loadPhase.mockReset();
+    loadKnockout.mockReset();
+  });
+
+  it('stores a reproducible forecast and the inputs used for its knockout matches', async () => {
+    const { phase, options } = phaseInput();
+    const placeholder = finalPlaceholder();
+    loadPhase.mockResolvedValue(phase);
+    loadKnockout.mockResolvedValue([placeholder]);
+
+    const stored = await calculateChampionsLeagueForecast(
+      phase.input.season,
+      options,
+    );
+    expect(stored).toEqual({ status: 'stored', id: expect.any(Number) });
+    expect(loadPhase).toHaveBeenCalledWith(phase.input.season, { before, seed });
+    expect(loadKnockout).toHaveBeenCalledWith(phase.input.season, before);
+
+    const records = await forecasts();
+    expect(records).toHaveLength(1);
+    const forecast = records[0]?.forecast;
+    if (
+      forecast?.algorithm !== CHAMPIONS_LEAGUE_FORECAST_ALGORITHM ||
+      forecast.knockoutSnapshot === undefined
+    )
+      throw new Error('expected a replayable Champions League forecast');
+    const { knockoutSnapshot, ...savedResult } = forecast;
+    expect(knockoutSnapshot).toEqual({
+      version: 'ucl-observed-poisson-knockout-v1',
+      strengths: phase.knockoutStrengths,
+      observations: [
+        {
+          matchId: placeholder.matchId,
+          stage: 'FINAL',
+          status: 'SCHEDULED',
+          homeTeamId: null,
+          awayTeamId: null,
+          result: null,
+          kickoffMs: placeholder.utcDate.getTime(),
+          observedAtMs: placeholder.observedAt.getTime(),
+        },
+      ],
+    });
+    const savedInput = { ...forecast.inputSnapshot, knockoutSnapshot };
+    const restored = createChampionsLeagueForecast(
+      restoreChampionsLeagueForecastInput(savedInput),
+    );
+    restored?.advance(forecast.inputSnapshot.runs);
+    expect(restored?.result()).toEqual(savedResult);
+    expect(
+      await calculateAndStoreSeasonForecast({
+        kind: 'champions-league-stages',
+        input: savedInput,
+      }),
+    ).toEqual(stored);
+    expect(await forecasts()).toHaveLength(1);
+  });
+
+  it('reports the first missing draw when the recorded schedule contains identified clubs', async () => {
+    const { phase, options } = phaseInput();
+    loadPhase.mockResolvedValue(phase);
+    loadKnockout.mockResolvedValue([
+      {
+        ...finalPlaceholder(),
+        homeTeamId: 1,
+        awayTeamId: 2,
+      },
+    ]);
+
+    expect(
+      await calculateChampionsLeagueForecast(phase.input.season, options),
+    ).toEqual({
+      status: 'unavailable',
+      reason: 'official-draw-required',
+      stage: 'PLAYOFFS',
+    });
+    expect(await forecasts()).toEqual([]);
+  });
+
+  it('withholds a confirmed draw while the preceding league phase still has future matches', async () => {
+    const { phase, options } = phaseInput();
+    const [first, ...fixtures] = phase.input.fixtures;
+    const upcoming = {
+      id: first!.id,
+      homeTeamId: first!.homeTeamId,
+      awayTeamId: first!.awayTeamId,
+      kind: 'forecast',
+      homeRate90: 1.2,
+      awayRate90: 0.8,
+    } as const;
+    loadPhase.mockResolvedValue({
+      ...phase,
+      input: { ...phase.input, fixtures: [upcoming, ...fixtures] },
+    });
+    loadKnockout.mockResolvedValue([]);
+
+    expect(
+      await calculateChampionsLeagueForecast(phase.input.season, {
+        ...options,
+        officialDraws: { playOff: { sourceReference: 'published draw', ties: [] } },
+      }),
+    ).toEqual({ status: 'unavailable', reason: 'incomplete-league-phase' });
+    expect(await forecasts()).toEqual([]);
+  });
+
+  it('returns the input availability reason without loading knockout observations', async () => {
+    const { phase, options } = phaseInput();
+    const unavailable = { status: 'unavailable', reason: 'official-table' } as const;
+    loadPhase.mockResolvedValue(unavailable);
+
+    expect(
+      await calculateChampionsLeagueForecast(phase.input.season, options),
+    ).toEqual(unavailable);
+    expect(loadKnockout).not.toHaveBeenCalled();
     expect(await forecasts()).toEqual([]);
   });
 });

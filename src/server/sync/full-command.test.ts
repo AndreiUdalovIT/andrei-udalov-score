@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { calculateSyncedSeasonForecasts } from '../forecasts/calculate-synced-season-forecasts';
+
 import type { syncFullCompetitions } from './full';
 import { runFullCommand } from './full-command';
 import type { runSync } from './run';
 
 const mocks = vi.hoisted(() => ({
   loadEnvConfig: vi.fn(),
+  calculateSyncedSeasonForecasts: vi.fn<typeof calculateSyncedSeasonForecasts>(),
   runSync: vi.fn<typeof runSync>(),
   syncFullCompetitions: vi.fn<typeof syncFullCompetitions>(),
 }));
@@ -13,12 +16,16 @@ const mocks = vi.hoisted(() => ({
 vi.mock('server-only', () => ({}));
 vi.mock('@next/env', () => ({ loadEnvConfig: mocks.loadEnvConfig }));
 vi.mock('./run', () => ({ runSync: mocks.runSync }));
+vi.mock('../forecasts/calculate-synced-season-forecasts', () => ({
+  calculateSyncedSeasonForecasts: mocks.calculateSyncedSeasonForecasts,
+}));
 vi.mock('./full', () => ({
   syncFullCompetitions: mocks.syncFullCompetitions,
 }));
 
 beforeEach(() => {
   mocks.loadEnvConfig.mockReset();
+  mocks.calculateSyncedSeasonForecasts.mockReset().mockResolvedValue(undefined);
   mocks.runSync
     .mockReset()
     .mockImplementation(async (_mode, _codes, task) => task({ count: 0 }));
@@ -45,6 +52,7 @@ beforeEach(() => {
   });
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 });
 
 afterEach(() => {
@@ -84,6 +92,49 @@ describe('full sync command', () => {
       'Synced CL 2025. 2 teams, 4 matches, 2 standings rows, 2 scorers.',
     );
     expect(console.log).toHaveBeenNthCalledWith(3, 'Synced 3 unique team squads.');
+    expect(console.error).not.toHaveBeenCalled();
+    expect(mocks.calculateSyncedSeasonForecasts).not.toHaveBeenCalled();
+  });
+
+  it('uses the completed full sync result for forecasts when requested', async () => {
+    const journalFinished = vi.fn();
+    mocks.runSync.mockImplementationOnce(async (_mode, _codes, task) => {
+      const result = await task({ count: 0 });
+      journalFinished();
+      return result;
+    });
+
+    expect(
+      await runFullCommand([
+        '--competition',
+        'PL',
+        '--competition',
+        'CL',
+        '--season-forecasts',
+      ]),
+    ).toBe(0);
+
+    expect(mocks.calculateSyncedSeasonForecasts).toHaveBeenCalledExactlyOnceWith([
+      expect.objectContaining({ competitionCode: 'PL', season: 2026 }),
+      expect.objectContaining({ competitionCode: 'CL', season: 2025 }),
+    ]);
+    expect(
+      mocks.calculateSyncedSeasonForecasts.mock.invocationCallOrder[0],
+    ).toBeGreaterThan(journalFinished.mock.invocationCallOrder[0]!);
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it('reports a forecast startup failure while preserving the successful sync exit code', async () => {
+    mocks.calculateSyncedSeasonForecasts.mockRejectedValueOnce(
+      new Error('Sensitive connection details'),
+    );
+
+    expect(await runFullCommand(['--competition', 'PL', '--season-forecasts'])).toBe(
+      0,
+    );
+    expect(console.warn).toHaveBeenCalledExactlyOnceWith(
+      'Season forecast calculation could not be started.',
+    );
     expect(console.error).not.toHaveBeenCalled();
   });
 
@@ -126,7 +177,10 @@ describe('full sync command', () => {
       new Error('Sensitive connection details'),
     );
 
-    expect(await runFullCommand(['--competition', 'PL'])).toBe(1);
+    expect(await runFullCommand(['--competition', 'PL', '--season-forecasts'])).toBe(
+      1,
+    );
+    expect(mocks.calculateSyncedSeasonForecasts).not.toHaveBeenCalled();
 
     expect(console.error).toHaveBeenCalledExactlyOnceWith(
       'Full sync failed. Check DATABASE_URL, FOOTBALL_DATA_TOKEN and API access.',

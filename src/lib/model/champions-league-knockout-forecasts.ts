@@ -1,8 +1,6 @@
-import 'server-only';
-
-import { calculateExpectedGoals } from '@/lib/model/expected-goals';
-import type { LeagueAverages } from '@/lib/model/league-averages';
-import type { RegularizedVenueStrength } from '@/lib/model/regularized-strengths';
+import { calculateExpectedGoals } from './expected-goals';
+import type { LeagueAverages } from './league-averages';
+import type { RegularizedVenueStrength } from './regularized-strengths';
 
 import type { ChampionsLeagueKnockoutForecasts } from './champions-league-match-providers';
 

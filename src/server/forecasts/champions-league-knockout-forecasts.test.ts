@@ -1,8 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import { createChampionsLeagueKnockoutForecasts } from './champions-league-knockout-forecasts';
-
-vi.mock('server-only', () => ({}));
+import { createChampionsLeagueKnockoutForecasts } from '@/lib/model/champions-league-knockout-forecasts';
 
 function venue(attack: number, defence: number) {
   return {

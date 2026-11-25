@@ -6,11 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { predictionModelConfig } from '@/lib/config/model-predictions';
+import { createChampionsLeagueKnockoutForecasts } from '@/lib/model/champions-league-knockout-forecasts';
 import { createLeagueSimulation } from '@/lib/model/league-simulation';
 import { projectSeasonStats } from '@/lib/model/season-stats';
 
 import * as schema from '../db/schema';
-import { createChampionsLeagueKnockoutForecasts } from './champions-league-knockout-forecasts';
 import {
   loadChampionsLeaguePhaseInput,
   loadLeagueForecastInput,

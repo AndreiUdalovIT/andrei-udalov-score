@@ -1,13 +1,13 @@
 import 'server-only';
 
 import type { ChampionsLeagueForecastInput } from '@/lib/model/champions-league-forecast';
+import { snapshotChampionsLeagueKnockout } from '@/lib/model/champions-league-knockout-snapshot';
 import type { RandomSeed } from '@/lib/model/seeded-random';
 
 import {
   calculateAndStoreSeasonForecast,
   type SeasonForecastStorageResult,
 } from './calculate-and-store';
-import { snapshotChampionsLeagueKnockout } from './champions-league-knockout-snapshot';
 import { loadChampionsLeagueKnockoutObservations } from './load-knockout-observations';
 import {
   loadChampionsLeaguePhaseInput,

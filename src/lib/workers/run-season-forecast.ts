@@ -1,35 +1,35 @@
 import { wrap } from 'comlink';
 
-import type { LeagueSimulationInput } from '../model/league-simulation';
 import type {
-  LeagueForecastWorkerApi,
-  LeagueForecastWorkerResult,
-} from './league-forecast-api';
+  SeasonForecastWorkerApi,
+  SeasonForecastWorkerRequest,
+  SeasonForecastWorkerResult,
+} from './season-forecast-api';
 
-export type LeagueForecastProgress = Readonly<{
+export type SeasonForecastProgress = Readonly<{
   completedRuns: number;
   totalRuns: number;
 }>;
 
 /** Run one local forecast in a dedicated worker. Aborting terminates that worker. */
-export async function runLeagueForecastInWorker(
-  input: LeagueSimulationInput,
+export async function runSeasonForecastInWorker(
+  request: SeasonForecastWorkerRequest,
   {
     onProgress,
     signal,
   }: Readonly<{
-    onProgress?: (progress: LeagueForecastProgress) => void;
+    onProgress?: (progress: SeasonForecastProgress) => void;
     signal?: AbortSignal;
   }> = {},
-): Promise<LeagueForecastWorkerResult> {
+): Promise<SeasonForecastWorkerResult> {
   signal?.throwIfAborted();
   const worker = new Worker(
-    new URL('./league-forecast.worker.ts', import.meta.url),
+    new URL('./season-forecast.worker.ts', import.meta.url),
     {
       type: 'module',
     },
   );
-  const totalRuns = input.runs;
+  const totalRuns = request.input.runs;
   let stopped = false;
   let rejectInterruption!: (reason: unknown) => void;
   const interruption = new Promise<never>((_resolve, reject) => {
@@ -41,15 +41,15 @@ export async function runLeagueForecastInWorker(
     rejectInterruption(reason);
   }
   const onAbort = () => stop(signal?.reason);
-  const onError = () => stop(new Error('league forecast worker failed'));
+  const onError = () => stop(new Error('season forecast worker failed'));
   worker.addEventListener('error', onError);
   worker.addEventListener('messageerror', onError);
   signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
-    const api = wrap<LeagueForecastWorkerApi>(worker);
-    async function calculate(): Promise<LeagueForecastWorkerResult> {
-      let update = await api.start(input);
+    const api = wrap<SeasonForecastWorkerApi>(worker);
+    async function calculate(): Promise<SeasonForecastWorkerResult> {
+      let update = await api.start(request);
       while (update.status === 'running') {
         if (stopped) return interruption;
         onProgress?.({ totalRuns, completedRuns: update.completedRuns });

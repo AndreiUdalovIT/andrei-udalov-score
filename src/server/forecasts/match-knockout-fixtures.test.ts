@@ -1,9 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import type { ChampionsLeagueKnockoutObservation } from './load-knockout-observations';
-import { createChampionsLeagueKnockoutFixtureLookup } from './match-knockout-fixtures';
-
-vi.mock('server-only', () => ({}));
+import type { ChampionsLeagueKnockoutObservation } from '@/lib/model/champions-league-knockout-observation';
+import { createChampionsLeagueKnockoutFixtureLookup } from '@/lib/model/match-knockout-fixtures';
 
 type Match = ChampionsLeagueKnockoutObservation;
 

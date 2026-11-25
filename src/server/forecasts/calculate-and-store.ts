@@ -11,6 +11,10 @@ import {
   type ChampionsLeagueForecastUnavailability,
 } from '@/lib/model/champions-league-forecast';
 import {
+  restoreChampionsLeagueForecastInput,
+  type ReplayableChampionsLeagueInput,
+} from '@/lib/model/champions-league-knockout-snapshot';
+import {
   createLeagueSimulation,
   type LeagueSimulationInput,
   type LeagueSimulationUnavailability,
@@ -22,11 +26,6 @@ import {
   seasonForecasts,
   type SeasonForecastKind,
 } from '../db/schema';
-
-import {
-  restoreChampionsLeagueForecastInput,
-  type ReplayableChampionsLeagueInput,
-} from './champions-league-knockout-snapshot';
 
 export const DEFAULT_SEASON_FORECAST_RUNS = 10_000;
 const runsPerBatch = 100;

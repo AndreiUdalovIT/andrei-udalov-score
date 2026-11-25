@@ -9,6 +9,8 @@ import {
   CHAMPIONS_LEAGUE_FORECAST_ALGORITHM,
   createChampionsLeagueForecast,
 } from '@/lib/model/champions-league-forecast';
+import type { ChampionsLeagueKnockoutObservation } from '@/lib/model/champions-league-knockout-observation';
+import { restoreChampionsLeagueForecastInput } from '@/lib/model/champions-league-knockout-snapshot';
 import type { ChampionsLeagueMatchProviders } from '@/lib/model/champions-league-simulation';
 import type { ChampionsLeagueTwoLegMatchInputs } from '@/lib/model/champions-league-two-leg-round';
 import type { SeasonCalendarFixture } from '@/lib/model/season-calendar-sampler';
@@ -17,11 +19,7 @@ import { projectSeasonStats } from '@/lib/model/season-stats';
 import * as schema from '../db/schema';
 import { calculateAndStoreSeasonForecast } from './calculate-and-store';
 import { calculateChampionsLeagueForecast } from './calculate-champions-league-forecast';
-import { restoreChampionsLeagueForecastInput } from './champions-league-knockout-snapshot';
-import {
-  loadChampionsLeagueKnockoutObservations,
-  type ChampionsLeagueKnockoutObservation,
-} from './load-knockout-observations';
+import { loadChampionsLeagueKnockoutObservations } from './load-knockout-observations';
 import { loadChampionsLeaguePhaseInput } from './load-league-input';
 
 const testState = vi.hoisted(() => ({

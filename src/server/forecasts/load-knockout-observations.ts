@@ -1,46 +1,19 @@
 import 'server-only';
 
 import { getCompetitionSeasonConfig } from '@/lib/config/competition-seasons';
-import type {
-  KnockoutExtraTimeInput,
-  KnockoutLegInput,
-  KnockoutPenaltiesInput,
-} from '@/lib/model/knockout-sampler';
+import {
+  championsLeagueKnockoutStages,
+  type ChampionsLeagueKnockoutObservation,
+} from '@/lib/model/champions-league-knockout-observation';
 import { selectTrainingMatches } from '@/lib/model/matches';
 
 import type { matchObservations } from '../db/schema';
 import { loadCompetitionMatchObservations } from '../queries/match-observations';
 
-const knockoutStages = [
-  'PLAYOFFS',
-  'LAST_16',
-  'QUARTER_FINALS',
-  'SEMI_FINALS',
-  'FINAL',
-] as const;
-
 type MatchObservation = typeof matchObservations.$inferSelect;
-type KnownRegulation = Omit<
-  Extract<KnockoutLegInput, { kind: 'known-result' }>,
-  'leg'
+type ObservedKnockoutScore = NonNullable<
+  ChampionsLeagueKnockoutObservation['result']
 >;
-type KnownExtraTime = Extract<KnockoutExtraTimeInput, { kind: 'known-result' }>;
-type KnownPenalties = Extract<KnockoutPenaltiesInput, { kind: 'known-result' }>;
-
-type ObservedKnockoutScore = {
-  regulation: KnownRegulation;
-  extraTime: KnownExtraTime | null;
-  penalties: KnownPenalties | null;
-};
-
-export type ChampionsLeagueKnockoutObservation = Pick<
-  MatchObservation,
-  'matchId' | 'utcDate' | 'observedAt' | 'status' | 'homeTeamId' | 'awayTeamId'
-> & {
-  stage: (typeof knockoutStages)[number];
-  /** Null when the result is still unknown or its periods cannot be reconciled. */
-  result: ObservedKnockoutScore | null;
-};
 
 function isGoalCount(value: number | null): value is number {
   return value !== null && Number.isSafeInteger(value) && value >= 0;
@@ -67,7 +40,7 @@ function readScore(
     awayGoals90,
   };
 
-  let penalties: KnownPenalties | null = null;
+  let penalties: ObservedKnockoutScore['penalties'] = null;
   let homeShootoutGoals = 0;
   let awayShootoutGoals = 0;
   if (duration === 'PENALTY_SHOOTOUT') {
@@ -129,7 +102,7 @@ export async function loadChampionsLeagueKnockoutObservations(
   );
   const matches: ChampionsLeagueKnockoutObservation[] = [];
   for (const observation of observations) {
-    const stage = knockoutStages.find(
+    const stage = championsLeagueKnockoutStages.find(
       (candidate) => candidate === observation.stage,
     );
     if (stage === undefined) continue;

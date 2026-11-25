@@ -1,16 +1,14 @@
-import 'server-only';
-
 import type {
   ChampionsLeagueForecastInput,
   ChampionsLeagueForecastResult,
-} from '@/lib/model/champions-league-forecast';
+} from './champions-league-forecast';
 
 import {
   createChampionsLeagueKnockoutForecasts,
   type ChampionsLeagueKnockoutStrengths,
 } from './champions-league-knockout-forecasts';
 import { createChampionsLeagueKnockoutMatchProviders } from './champions-league-match-providers';
-import type { ChampionsLeagueKnockoutObservation } from './load-knockout-observations';
+import type { ChampionsLeagueKnockoutObservation } from './champions-league-knockout-observation';
 
 const knockoutSnapshotVersion = 'ucl-observed-poisson-knockout-v1';
 

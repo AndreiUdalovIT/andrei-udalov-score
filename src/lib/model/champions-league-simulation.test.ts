@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createChampionsLeagueKnockoutMatchProviders } from '@/server/forecasts/champions-league-match-providers';
-import type { ChampionsLeagueKnockoutObservation } from '@/server/forecasts/load-knockout-observations';
+import { createChampionsLeagueKnockoutMatchProviders } from './champions-league-match-providers';
+import type { ChampionsLeagueKnockoutObservation } from './champions-league-knockout-observation';
 
 import {
   CHAMPIONS_LEAGUE_FORECAST_ALGORITHM,
@@ -20,8 +20,6 @@ import type { ChampionsLeagueTwoLegMatchInputs } from './champions-league-two-le
 import type { SeasonCalendarFixture } from './season-calendar-sampler';
 import { projectSeasonStats } from './season-stats';
 import { SEEDED_RANDOM_ALGORITHM } from './seeded-random';
-
-vi.mock('server-only', () => ({}));
 
 const seed = [1, 2, 3, 4] as const;
 const anotherSeed = [11, 12, 13, 14] as const;

@@ -5,6 +5,7 @@ import { and, desc, eq, lt } from 'drizzle-orm';
 import { getCompetitionSeasonConfig } from '@/lib/config/competition-seasons';
 import type { SiteCompetitionCode } from '@/lib/config/competitions';
 import { predictionModelConfig } from '@/lib/config/model-predictions';
+import type { ChampionsLeagueKnockoutStrengths } from '@/lib/model/champions-league-knockout-forecasts';
 import { rankChampionsLeaguePhase } from '@/lib/model/champions-league-phase-ranking';
 import { calculateExpectedGoals } from '@/lib/model/expected-goals';
 import type { LeagueSimulationInput } from '@/lib/model/league-simulation';
@@ -20,8 +21,6 @@ import { projectSeasonStats } from '@/lib/model/season-stats';
 import { db } from '../db/client';
 import { competitions, standingsSnapshots } from '../db/schema';
 import { loadObservedCompetitionStrengthSnapshot } from '../queries/strengths';
-import type { ChampionsLeagueKnockoutStrengths } from './champions-league-knockout-forecasts';
-
 type LeagueForecastInput = Omit<LeagueSimulationInput, 'runs'>;
 type LeagueForecastInputOptions = Readonly<{ before: Date; seed: RandomSeed }>;
 type FixtureIdentity = Pick<

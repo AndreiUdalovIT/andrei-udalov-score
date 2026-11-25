@@ -1,20 +1,17 @@
-import 'server-only';
-
 import type {
   ChampionsLeagueFinalFixture,
   ChampionsLeagueFinalMatchInputs,
-} from '@/lib/model/champions-league-final-simulation';
-import type { ChampionsLeagueMatchProviders } from '@/lib/model/champions-league-simulation';
-import type { ChampionsLeagueTwoLegMatchInputs } from '@/lib/model/champions-league-two-leg-round';
+} from './champions-league-final-simulation';
+import type { ChampionsLeagueKnockoutObservation } from './champions-league-knockout-observation';
+import type { ChampionsLeagueMatchProviders } from './champions-league-simulation';
+import type { ChampionsLeagueTwoLegMatchInputs } from './champions-league-two-leg-round';
 import type {
   KnockoutExtraTimeInput,
   KnockoutLegInput,
   KnockoutPenaltiesInput,
-} from '@/lib/model/knockout-sampler';
-import { isPrematchFixture } from '@/lib/model/prediction-eligibility';
-
-import type { ChampionsLeagueKnockoutObservation } from './load-knockout-observations';
+} from './knockout-sampler';
 import { createChampionsLeagueKnockoutFixtureLookup } from './match-knockout-fixtures';
+import { isPrematchFixture } from './prediction-eligibility';
 
 type Observation = ChampionsLeagueKnockoutObservation;
 type ObservedScore = NonNullable<Observation['result']>;

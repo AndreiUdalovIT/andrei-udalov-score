@@ -1,9 +1,7 @@
-import 'server-only';
+import type { ChampionsLeagueFinalFixture } from './champions-league-final-simulation';
+import type { ChampionsLeagueTwoLegMatchInputs } from './champions-league-two-leg-round';
 
-import type { ChampionsLeagueFinalFixture } from '@/lib/model/champions-league-final-simulation';
-import type { ChampionsLeagueTwoLegMatchInputs } from '@/lib/model/champions-league-two-leg-round';
-
-import type { ChampionsLeagueKnockoutObservation } from './load-knockout-observations';
+import type { ChampionsLeagueKnockoutObservation } from './champions-league-knockout-observation';
 
 type Match = ChampionsLeagueKnockoutObservation;
 type FixtureStage = Match['stage'];

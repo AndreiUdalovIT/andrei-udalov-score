@@ -20,6 +20,7 @@ import { projectSeasonStats } from '@/lib/model/season-stats';
 import { db } from '../db/client';
 import { competitions, standingsSnapshots } from '../db/schema';
 import { loadObservedCompetitionStrengthSnapshot } from '../queries/strengths';
+import type { ChampionsLeagueKnockoutStrengths } from './champions-league-knockout-forecasts';
 
 type LeagueForecastInput = Omit<LeagueSimulationInput, 'runs'>;
 type LeagueForecastInputOptions = Readonly<{ before: Date; seed: RandomSeed }>;
@@ -40,6 +41,12 @@ export type LeagueForecastInputResult =
       reason: 'fixture-state' | 'fixture-rates';
       matchId: number;
     };
+
+type LeagueTableSnapshotResult =
+  | Exclude<LeagueForecastInputResult, { status: 'ready' }>
+  | (Extract<LeagueForecastInputResult, { status: 'ready' }> & {
+      knockoutStrengths: ChampionsLeagueKnockoutStrengths;
+    });
 
 async function loadOfficialTable(
   competitionCode: SiteCompetitionCode,
@@ -69,24 +76,27 @@ async function loadOfficialTable(
 }
 
 /** Prepare an observed domestic calendar, retaining official point adjustments. */
-export function loadLeagueForecastInput(
+export async function loadLeagueForecastInput(
   competitionCode: SiteCompetitionCode,
   season: number,
   options: LeagueForecastInputOptions,
 ): Promise<LeagueForecastInputResult> {
-  return loadObservedLeagueTableInput(
+  const result = await loadObservedLeagueTableInput(
     competitionCode,
     season,
     options,
     'round-robin',
   );
+  return result.status === 'ready'
+    ? { status: 'ready', input: result.input }
+    : result;
 }
 
 /** Prepare the observed calendar and table for the Champions League league phase. */
 export function loadChampionsLeaguePhaseInput(
   season: number,
   options: LeagueForecastInputOptions,
-): Promise<LeagueForecastInputResult> {
+): Promise<LeagueTableSnapshotResult> {
   return loadObservedLeagueTableInput('CL', season, options, 'league-phase');
 }
 
@@ -95,7 +105,7 @@ async function loadObservedLeagueTableInput(
   season: number,
   { before, seed }: LeagueForecastInputOptions,
   format: 'round-robin' | 'league-phase',
-): Promise<LeagueForecastInputResult> {
+): Promise<LeagueTableSnapshotResult> {
   const dataCutoffMs = before.getTime();
   if (!Number.isFinite(dataCutoffMs) || dataCutoffMs > Date.now())
     throw new RangeError('season forecast requires a valid cutoff at or before now');
@@ -234,6 +244,7 @@ async function loadObservedLeagueTableInput(
 
   return {
     status: 'ready',
+    knockoutStrengths: { league: strengths.league, teams: strengths.teams },
     input: {
       competitionCode,
       season,

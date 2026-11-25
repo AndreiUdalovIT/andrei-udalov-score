@@ -10,6 +10,7 @@ import { createLeagueSimulation } from '@/lib/model/league-simulation';
 import { projectSeasonStats } from '@/lib/model/season-stats';
 
 import * as schema from '../db/schema';
+import { createChampionsLeagueKnockoutForecasts } from './champions-league-knockout-forecasts';
 import {
   loadChampionsLeaguePhaseInput,
   loadLeagueForecastInput,
@@ -434,6 +435,18 @@ describe('loadChampionsLeaguePhaseInput', () => {
         awayRate90: expect.any(Number),
       },
     ]);
+    const phaseForecast = result.input.fixtures.find(
+      (fixture) => fixture.id === 5001 && fixture.kind === 'forecast',
+    );
+    const forecasts = createChampionsLeagueKnockoutForecasts(
+      structuredClone(result.knockoutStrengths),
+    );
+    expect(result.knockoutStrengths.league?.matchCount).toBe(142);
+    if (phaseForecast?.kind !== 'forecast') throw new Error('expected phase rates');
+    expect(forecasts.leg({ homeTeamId: 1, awayTeamId: 2, leg: 2 })).toMatchObject({
+      homeRate90: phaseForecast.homeRate90,
+      awayRate90: phaseForecast.awayRate90,
+    });
     expect(createLeagueSimulation({ ...result.input, runs: 1 })).not.toBeNull();
   });
 

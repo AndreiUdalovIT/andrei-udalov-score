@@ -164,7 +164,7 @@ describe('cooperative seeded league simulation', () => {
     expect(job.completedRuns).toBe(4);
     const result = job.result()!;
     expect(LEAGUE_SIMULATION_ALGORITHM).toBe(
-      'seeded-fixed-rate-league-simulation-v4',
+      'seeded-fixed-rate-league-simulation-v5',
     );
     expect(result.algorithm).toBe(LEAGUE_SIMULATION_ALGORITHM);
     expect(result.versions.random).toBe(SEEDED_RANDOM_ALGORITHM);
@@ -348,26 +348,36 @@ describe('cooperative seeded league simulation', () => {
     },
   );
 
-  it('withholds the entire forecast when a later sampled run needs a Premier League play-off', () => {
-    // Run 1 is 0:0 and keeps distinct points; run 2 is 1:0 and makes clubs 1/2
-    // fully equal in the complete league and both direct criteria.
-    const job = createLeagueSimulation(
-      withPoints(input(), { 1: 0, 2: 3, 8: -800, 9: -800 }),
-    )!;
+  it('keeps every run when a later Premier League finish requires a play-off', () => {
+    // Scores by seed are 0:0, 1:0, 3:0, 3:2. The second run ties the top two
+    // clubs on the league and head-to-head criteria.
+    const source = withPoints(input(), { 1: 0, 2: 3, 8: -800, 9: -800 });
+    const job = createLeagueSimulation(source)!;
+    job.advance(2);
+    expect(job.status).toBe('running');
+    expect(job.completedRuns).toBe(2);
+    expect(job.unavailability).toBeNull();
     job.advance(100);
-    expect(job.status).toBe('unavailable');
-    expect(job.completedRuns).toBe(1);
-    expect(job.result()).toBeNull();
-    expect(job.unavailability).toEqual({
-      run: 2,
-      reason: 'ranking-unresolved',
-      playOffEvents: [],
-      groups: [{ from: 1, to: 2, teamIds: [1, 2], reason: 'play-off-required' }],
+    expect(job.status).toBe('complete');
+    expect(job.completedRuns).toBe(4);
+
+    const result = job.result()!;
+    expect(result.forecast.unresolvedRankingRuns).toBe(1);
+    const [first, second] = result.forecast.teams;
+    expect(first!.expectedPoints).toBe(2.5);
+    expect(second!.expectedPoints).toBe(3.25);
+    expect(first!.positionDistribution[0]).toEqual({
+      position: 1,
+      count: 1,
+      probability: 0.25,
+      upperBound: { count: 2, probability: 0.5 },
     });
-    job.advance(100);
-    job.cancel();
-    expect(job.status).toBe('unavailable');
-    expect(job.completedRuns).toBe(1);
+    expect(first!.zones[0]).toMatchObject({ count: 4, probability: 1 });
+    expect(first!.zones[0]).not.toHaveProperty('upperBound');
+
+    const replay = createLeagueSimulation(result.inputSnapshot)!;
+    replay.advance(4);
+    expect(replay.result()).toEqual(result);
   });
 
   it('keeps a joint Premier League finish and the next distinct place in the forecast', () => {

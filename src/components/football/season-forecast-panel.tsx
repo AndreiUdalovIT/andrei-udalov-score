@@ -16,6 +16,7 @@ import type { SeasonForecastWorkerRequest } from '@/lib/workers/season-forecast-
 
 type Forecast = LeagueSimulationResult | ChampionsLeagueForecastResult;
 type PublishedForecast = LeagueSimulationResult | StoredChampionsLeagueForecast;
+type TeamNames = Readonly<Partial<Record<number, string>>>;
 type Calculation =
   | { status: 'idle' }
   | { status: 'running'; progress: SeasonForecastProgress }
@@ -27,6 +28,70 @@ const chanceFormat = new Intl.NumberFormat('ru-RU', {
   style: 'percent',
   maximumFractionDigits: 1,
 });
+
+const rangeFormat = new Intl.NumberFormat('ru-RU', {
+  style: 'percent',
+  maximumFractionDigits: 2,
+});
+
+function ForecastProbabilityRanges({
+  forecast,
+  source,
+  teamNames,
+}: {
+  forecast: Forecast;
+  source: 'опубликовано' | 'пересчитано';
+  teamNames: TeamNames;
+}) {
+  if (!('forecast' in forecast) || !forecast.forecast.unresolvedRankingRuns)
+    return null;
+
+  const { teams, unresolvedRankingRuns } = forecast.forecast;
+  return (
+    <details className="rounded-md border border-border px-3 py-2 text-body-sm">
+      <summary className="cursor-pointer font-medium">
+        Диапазоны вероятностей · {source}
+      </summary>
+      <p className="mt-2 text-muted-foreground">
+        Решающее равенство в {unresolvedRankingRuns.toLocaleString('ru-RU')} из{' '}
+        {forecast.forecast.runs.toLocaleString('ru-RU')} прогонов. Нижняя граница
+        учитывает определившиеся исходы, верхняя включает возможные.
+      </p>
+      <ul className="mt-2 divide-y divide-border">
+        {teams.flatMap(({ teamId, positionDistribution, zones }) =>
+          [
+            ...positionDistribution.map((entry) => ({
+              ...entry,
+              key: 'position-' + entry.position,
+              label: entry.position + '-е место',
+            })),
+            ...zones.map((entry) => ({
+              ...entry,
+              key: 'zone-' + entry.from + '-' + entry.to + '-' + entry.zone,
+            })),
+          ].flatMap(({ key, label, probability, upperBound }) =>
+            upperBound === undefined
+              ? []
+              : [
+                  <li
+                    key={teamId + ':' + key}
+                    className="flex flex-wrap justify-between gap-x-3 py-1.5"
+                  >
+                    <span>
+                      {teamNames[teamId] ?? `Клуб ${teamId}`} · {label}
+                    </span>
+                    <span className="whitespace-nowrap tabular-nums">
+                      {rangeFormat.format(probability)}–
+                      {rangeFormat.format(upperBound.probability)}
+                    </span>
+                  </li>,
+                ],
+          ),
+        )}
+      </ul>
+    </details>
+  );
+}
 
 function teamMetrics(forecast: Forecast) {
   return 'forecast' in forecast
@@ -43,7 +108,7 @@ export function SeasonForecastPanel({
   teamNames,
 }: {
   published: PublishedForecast;
-  teamNames: Readonly<Partial<Record<number, string>>>;
+  teamNames: TeamNames;
 }) {
   const { dataCutoffMs, runs } = published.inputSnapshot;
   const activeRun = useRef<AbortController | null>(null);
@@ -197,6 +262,18 @@ export function SeasonForecastPanel({
         <p role="alert" className="text-body-sm">
           Не удалось пересчитать прогноз.
         </p>
+      )}
+      <ForecastProbabilityRanges
+        forecast={published}
+        source="опубликовано"
+        teamNames={teamNames}
+      />
+      {calculation.status === 'complete' && (
+        <ForecastProbabilityRanges
+          forecast={calculation.forecast}
+          source="пересчитано"
+          teamNames={teamNames}
+        />
       )}
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-body-sm tabular-nums">

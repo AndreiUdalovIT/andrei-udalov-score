@@ -8,7 +8,7 @@ import type { Zone } from '@/lib/types/football';
 import type { SeasonStatsBaseline } from './season-stats';
 
 export const LEAGUE_FORECAST_ACCUMULATION_ALGORITHM =
-  'complete-league-empirical-summary-v2';
+  'complete-league-empirical-summary-v3';
 export const LEAGUE_POINTS_INTERVAL_METHOD = 'inverse-empirical-cdf-10-90-v1';
 
 export type LeagueForecastPoints = Readonly<
@@ -22,16 +22,22 @@ export type LeagueForecastPositionGroup = {
   readonly reason?: string;
 };
 
+type PlacementFrequency = {
+  /** Runs where membership is certain. Without an upper bound, this is exact. */
+  count: number;
+  probability: number;
+  /** Also includes runs where the placement depends on an unresolved tie. */
+  upperBound?: { count: number; probability: number };
+};
+
+type PositionRangeCount = { from: number; to: number; count: number };
+
 export type LeagueTeamForecast = {
   teamId: number;
   expectedPoints: number;
   pointsInterval80: { lower: number; upper: number };
-  /** A tied club counts at the first position of its shared range. */
-  positionDistribution: {
-    position: number;
-    count: number;
-    probability: number;
-  }[];
+  /** A resolved joint finish counts at the first position of its shared range. */
+  positionDistribution: (PlacementFrequency & { position: number })[];
   /** Subset of positionDistribution covering joint finishes, keyed by exact range. */
   sharedPositionDistribution: {
     from: number;
@@ -40,23 +46,25 @@ export type LeagueTeamForecast = {
     probability: number;
   }[];
   /** One entry per configured range, including separate entries with the same zone. */
-  zones: {
+  zones: (PlacementFrequency & {
     from: number;
     to: number;
     zone: Zone;
     label: string;
-    count: number;
-    probability: number;
-  }[];
+  })[];
 };
 
 export type LeagueForecastSummary = {
-  algorithm: typeof LEAGUE_FORECAST_ACCUMULATION_ALGORITHM;
+  algorithm:
+    | 'complete-league-empirical-summary-v2'
+    | typeof LEAGUE_FORECAST_ACCUMULATION_ALGORITHM;
   pointsIntervalMethod: typeof LEAGUE_POINTS_INTERVAL_METHOD;
   competitionCode: SiteCompetitionCode;
   season: number;
   runs: number;
   qualificationNote: string | null;
+  /** Number of runs containing at least one unresolved Premier League tie. */
+  unresolvedRankingRuns?: number;
   teams: LeagueTeamForecast[];
 };
 
@@ -84,23 +92,49 @@ function empiricalQuantile(
   throw new RangeError('point histogram does not cover the requested sample rank');
 }
 
+function placementFrequency(
+  positions: readonly number[],
+  unresolvedRanges: Iterable<PositionRangeCount>,
+  from: number,
+  to: number,
+  runs: number,
+): PlacementFrequency {
+  let count = 0;
+  for (let position = from; position <= to; position += 1)
+    count += positions[position - 1]!;
+
+  let possibleAdditional = 0;
+  for (const range of unresolvedRanges) {
+    if (from <= range.from && range.to <= to) {
+      count += range.count;
+    } else if (from <= range.to && range.from <= to) {
+      possibleAdditional += range.count;
+    }
+  }
+  if (possibleAdditional === 0) return { count, probability: count / runs };
+  const upperCount = count + possibleAdditional;
+  return {
+    count,
+    probability: count / runs,
+    upperBound: { count: upperCount, probability: upperCount / runs },
+  };
+}
+
 /**
  * Accumulate a fixed number of complete league scenarios, without sampling them.
  * Support configured site round-robin leagues and the Champions League league
  * phase. Return null for unsupported formats/seasons. Validate a fixed positive
  * safe-integer roster and run count.
  * Each run must contain every club once, safe integer points (including deductions),
- * and disjoint ranges that cover the entire table. The only non-singleton groups
- * accepted are Premier League shared positions with equal points outside title
- * and zone boundaries. The caller reconciles season stats and confirms the
- * ranking reason with the competition ranker.
- * Count a joint finish at its first position for every tied club and also keep
- * the exact shared range in a separate subset of the histogram. No club order
- * is assigned within a tie. Across clubs, a position can therefore have more
- * than one finisher in a run and the later slots in its range have none.
- * Validate a run before updating any statistics. An invalid/unresolved run marks
- * the accumulator failed, keeps its completed count and permanently withholds the
- * summary. Do not discard such runs and resample: that would condition the forecast.
+ * and disjoint ranges that cover the entire table. For equal-point Premier League
+ * groups, accept shared finishes outside decisive boundaries and unresolved
+ * play-off or league-decision ranges crossing a boundary. The caller reconciles
+ * season stats and confirms the ranking reason with the competition ranker.
+ * Count a shared finish at the first position for every member. For an unresolved
+ * range, count certain and possible membership in each event separately. Each run
+ * contributes once per event, including zones that overlap multiple possible places.
+ * Validate a run before updating any statistics. An invalid run marks the
+ * accumulator failed, keeps its completed count and withholds the summary.
  * Summaries are available only after exactly targetRuns accepted scenarios.
  * Extra submissions after completion throw without changing the completed summary.
  * Point sums use private BigInts; divide quotient/remainder to return Number means.
@@ -167,9 +201,11 @@ export function createLeagueForecastAccumulator(
     pointSum: BigInt(0),
     pointHistogram: new Map<number, number>(),
     positions: Array<number>(teamCount).fill(0),
-    sharedPositions: new Map<string, { from: number; to: number; count: number }>(),
+    sharedPositions: new Map<string, PositionRangeCount>(),
+    unresolvedPositions: new Map<string, PositionRangeCount>(),
   }));
   let completed = 0;
+  let unresolvedRankingRuns = 0;
   let failed = false;
 
   function prepareRun(
@@ -194,7 +230,10 @@ export function createLeagueForecastAccumulator(
       }
       pointMap.set(row.teamId, row.points);
     }
-    const placements = new Map<number, LeagueForecastPositionGroup>();
+    const placements = new Map<
+      number,
+      { from: number; to: number; unresolved: boolean }
+    >();
     const occupiedSlots = new Set<number>();
     for (const group of groups) {
       if (
@@ -210,27 +249,34 @@ export function createLeagueForecastAccumulator(
           'run ranking requires valid ranges and matching club counts',
         );
       }
-      const shared = group.from < group.to;
-      if (shared || group.reason === 'shared-position') {
-        const crossesZone = zones.some(
-          (zone) =>
-            (group.from < zone.from && zone.from <= group.to) ||
-            (group.from <= zone.to && zone.to < group.to),
-        );
-        if (
-          !shared ||
-          competitionCode !== 'PL' ||
-          group.reason !== 'shared-position' ||
+      const shared = group.reason === 'shared-position';
+      const needsPlayOff = group.reason === 'play-off-required';
+      const needsDecision = group.reason === 'league-decision-required';
+      const unresolved = needsPlayOff || needsDecision;
+      if (group.from < group.to || shared || unresolved) {
+        const decisive =
           group.from === 1 ||
-          crossesZone ||
+          zones.some(
+            (zone) =>
+              (group.from < zone.from && zone.from <= group.to) ||
+              (group.from <= zone.to && zone.to < group.to),
+          );
+        const matchesReason = decisive
+          ? group.teamIds.length === 2
+            ? needsPlayOff
+            : needsDecision
+          : shared;
+        if (
+          group.from === group.to ||
+          competitionCode !== 'PL' ||
+          !matchesReason ||
           group.teamIds.some(
             (id) => pointMap.get(id) !== pointMap.get(group.teamIds[0]!),
           )
         )
-          throw new RangeError(
-            'only resolved Premier League shared positions are supported',
-          );
+          throw new RangeError('invalid Premier League ranking range');
       }
+      const placement = { from: group.from, to: group.to, unresolved };
       for (let slot = group.from; slot <= group.to; slot += 1) {
         if (occupiedSlots.has(slot))
           throw new RangeError(
@@ -241,15 +287,14 @@ export function createLeagueForecastAccumulator(
       for (const teamId of group.teamIds) {
         if (!roster.has(teamId) || placements.has(teamId))
           throw new RangeError('each club must appear once in the ranking');
-        placements.set(teamId, group);
+        placements.set(teamId, placement);
       }
     }
     if (placements.size !== teamCount)
       throw new RangeError('run ranking must cover the complete league');
     return ids.map((teamId) => ({
       points: pointMap.get(teamId)!,
-      from: placements.get(teamId)!.from,
-      to: placements.get(teamId)!.to,
+      ...placements.get(teamId)!,
     }));
   }
 
@@ -285,17 +330,21 @@ export function createLeagueForecastAccumulator(
           row.points,
           (state.pointHistogram.get(row.points) ?? 0) + 1,
         );
-        state.positions[row.from - 1]! += 1;
+        if (!row.unresolved) state.positions[row.from - 1]! += 1;
         if (row.from < row.to) {
+          const ranges = row.unresolved
+            ? state.unresolvedPositions
+            : state.sharedPositions;
           const key = row.from + ':' + row.to;
-          const shared = state.sharedPositions.get(key);
-          if (shared === undefined) {
-            state.sharedPositions.set(key, { from: row.from, to: row.to, count: 1 });
+          const range = ranges.get(key);
+          if (range === undefined) {
+            ranges.set(key, { from: row.from, to: row.to, count: 1 });
           } else {
-            shared.count += 1;
+            range.count += 1;
           }
         }
       });
+      if (prepared.some(({ unresolved }) => unresolved)) unresolvedRankingRuns += 1;
       completed += 1;
     },
     summarize() {
@@ -310,6 +359,7 @@ export function createLeagueForecastAccumulator(
         season,
         runs: completed,
         qualificationNote,
+        ...(unresolvedRankingRuns > 0 && { unresolvedRankingRuns }),
         teams: states.map((state) => {
           const bins = [...state.pointHistogram.entries()].sort(
             (left, right) => left[0] - right[0],
@@ -323,20 +373,29 @@ export function createLeagueForecastAccumulator(
               lower: empiricalQuantile(bins, lowerRank),
               upper: empiricalQuantile(bins, upperRank),
             },
-            positionDistribution: state.positions.map((count, index) => ({
+            positionDistribution: state.positions.map((_, index) => ({
               position: index + 1,
-              count,
-              probability: count / completed,
+              ...placementFrequency(
+                state.positions,
+                state.unresolvedPositions.values(),
+                index + 1,
+                index + 1,
+                completed,
+              ),
             })),
             sharedPositionDistribution: [...state.sharedPositions.values()]
               .sort((left, right) => left.from - right.from || left.to - right.to)
               .map((range) => ({ ...range, probability: range.count / completed })),
-            zones: zones.map((zone) => {
-              const count = state.positions
-                .slice(zone.from - 1, zone.to)
-                .reduce((sum, value) => sum + value, 0);
-              return { ...zone, count, probability: count / completed };
-            }),
+            zones: zones.map((zone) => ({
+              ...zone,
+              ...placementFrequency(
+                state.positions,
+                state.unresolvedPositions.values(),
+                zone.from,
+                zone.to,
+                completed,
+              ),
+            })),
           };
         }),
       };

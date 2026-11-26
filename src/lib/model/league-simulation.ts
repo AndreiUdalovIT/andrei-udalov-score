@@ -63,7 +63,7 @@ import {
   type ProjectedSeasonStats,
 } from './season-stats';
 
-export const LEAGUE_SIMULATION_ALGORITHM = 'seeded-fixed-rate-league-simulation-v4';
+export const LEAGUE_SIMULATION_ALGORITHM = 'seeded-fixed-rate-league-simulation-v5';
 
 type PlayOffGoalRates = Readonly<{ homeRate90: number; awayRate90: number }>;
 
@@ -143,7 +143,8 @@ export type LeagueSimulationUnavailability = {
 };
 
 export type LeagueSimulationResult = {
-  algorithm: typeof LEAGUE_SIMULATION_ALGORITHM;
+  algorithm:
+    'seeded-fixed-rate-league-simulation-v4' | typeof LEAGUE_SIMULATION_ALGORITHM;
   inputSnapshot: LeagueSimulationSnapshot;
   versions: {
     random: typeof SEEDED_RANDOM_ALGORITHM;
@@ -504,10 +505,7 @@ export function createLeagueSimulation(
   let unavailable: LeagueSimulationUnavailability | null = null;
 
   function isUnresolvedGroup(group: RankingGroup): boolean {
-    return (
-      (group.teamIds.length !== 1 || group.from !== group.to) &&
-      !(snapshot.competitionCode === 'PL' && group.reason === 'shared-position')
-    );
+    return group.teamIds.length !== 1 || group.from !== group.to;
   }
 
   function pause(
@@ -609,6 +607,7 @@ export function createLeagueSimulation(
     }
     let ranked = rank(rows, scores);
     if (ranked === null) return pause('ranking-unavailable');
+    if (snapshot.competitionCode === 'PL') return ranked;
     if (snapshot.competitionCode === 'FL1') {
       const unresolved = ranked.groups.filter((group) => group.teamIds.length > 1);
       if (unresolved.some((group) => group.reason !== 'drawing-of-lots-required'))

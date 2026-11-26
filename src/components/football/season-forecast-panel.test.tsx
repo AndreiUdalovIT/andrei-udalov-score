@@ -43,7 +43,7 @@ const input = {
   sampling: { maxGoals: 64, tailTolerance: 1e-10 },
 };
 const league: LeagueSimulationResult = {
-  algorithm: LEAGUE_SIMULATION_ALGORITHM,
+  algorithm: 'seeded-fixed-rate-league-simulation-v4',
   inputSnapshot: {
     ...input,
     competitionCode: 'PL',
@@ -66,7 +66,7 @@ const league: LeagueSimulationResult = {
   lotPolicy: 'simulate-eligible-uniform-lots',
   samplingBounds: { perRun: 0, allRuns: 0 },
   forecast: {
-    algorithm: LEAGUE_FORECAST_ACCUMULATION_ALGORITHM,
+    algorithm: 'complete-league-empirical-summary-v2',
     pointsIntervalMethod: LEAGUE_POINTS_INTERVAL_METHOD,
     competitionCode: 'PL',
     season: 2026,
@@ -231,4 +231,84 @@ it('sends the published knockout snapshot to the Champions League worker', async
   expect(screen.getByRole('status')).toHaveTextContent(
     'По этому снимку локальный прогноз недоступен.',
   );
+});
+
+it('shows bounds only for affected events and keeps published and worker ranges separate', async () => {
+  const published: LeagueSimulationResult = {
+    ...league,
+    algorithm: LEAGUE_SIMULATION_ALGORITHM,
+    forecast: {
+      ...league.forecast,
+      algorithm: LEAGUE_FORECAST_ACCUMULATION_ALGORITHM,
+      unresolvedRankingRuns: 1,
+      teams: [
+        {
+          ...league.forecast.teams[0]!,
+          positionDistribution: [
+            {
+              position: 4,
+              count: 200,
+              probability: 0.2,
+              upperBound: { count: 201, probability: 0.201 },
+            },
+          ],
+          zones: [
+            {
+              from: 1,
+              to: 4,
+              zone: 'ucl',
+              label: 'Лига чемпионов',
+              count: 500,
+              probability: 0.5,
+              upperBound: { count: 501, probability: 0.501 },
+            },
+            {
+              from: 18,
+              to: 20,
+              zone: 'releg',
+              label: 'Вылет в Чемпионшип',
+              count: 0,
+              probability: 0,
+            },
+          ],
+        },
+      ],
+    },
+  };
+  run.mockResolvedValueOnce({
+    status: 'complete',
+    result: {
+      ...published,
+      forecast: {
+        ...published.forecast,
+        teams: [
+          {
+            ...published.forecast.teams[0]!,
+            positionDistribution: [
+              {
+                position: 4,
+                count: 210,
+                probability: 0.21,
+                upperBound: { count: 211, probability: 0.211 },
+              },
+            ],
+          },
+        ],
+      },
+    },
+  });
+  const user = userEvent.setup();
+  render(<SeasonForecastPanel published={published} teamNames={{ 1: 'Арсенал' }} />);
+
+  await user.click(screen.getByText('Диапазоны вероятностей · опубликовано'));
+  expect(screen.getByText('Арсенал · 4-е место')).toBeVisible();
+  expect(screen.getByText(/20\s*%–20,1\s*%/)).toBeVisible();
+  expect(screen.getByText(/50\s*%–50,1\s*%/)).toBeVisible();
+  expect(screen.queryByText(/Вылет в Чемпионшип/)).toBeNull();
+
+  await user.click(screen.getByRole('button', { name: 'Пересчитать' }));
+  await user.click(await screen.findByText('Диапазоны вероятностей · пересчитано'));
+  expect(screen.getByText(/20\s*%–20,1\s*%/)).toBeVisible();
+  expect(screen.getByText(/21\s*%–21,1\s*%/)).toBeVisible();
+  expect(screen.getByRole('table', { name: 'Ожидаемые очки' })).toBeVisible();
 });

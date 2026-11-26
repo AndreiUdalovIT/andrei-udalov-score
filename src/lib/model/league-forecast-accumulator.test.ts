@@ -85,7 +85,7 @@ function completeLeague(teamCount: number) {
 describe('complete league forecast accumulation', () => {
   it('withholds a summary until exactly the requested number of runs', () => {
     const accumulator = createLeagueForecastAccumulator('PL', 2026, ids20, 2)!;
-    expect(accumulator.algorithm).toBe('complete-league-empirical-summary-v2');
+    expect(accumulator.algorithm).toBe('complete-league-empirical-summary-v3');
     expect(accumulator.algorithm).toBe(LEAGUE_FORECAST_ACCUMULATION_ALGORITHM);
     expect(accumulator.targetRuns).toBe(2);
     expect(accumulator.completedRuns).toBe(0);
@@ -409,6 +409,83 @@ describe('complete league forecast accumulation', () => {
     expect(
       accumulator.summarize()!.teams[1]!.sharedPositionDistribution[0]!.count,
     ).toBe(1);
+  });
+
+  it('counts each unresolved run once per possible position or zone', () => {
+    const accumulator = createLeagueForecastAccumulator('PL', 2026, ids20, 3)!;
+    const unresolved = (from: number, to: number, reason: string) =>
+      rankingWithSharedRange(from, to).map((group) =>
+        group.from === from ? { ...group, reason } : group,
+      );
+    accumulator.addRun(points(ids20, 60), ranking());
+    accumulator.addRun(points(ids20, 66), unresolved(1, 2, 'play-off-required'));
+    accumulator.addRun(
+      points(ids20, 69),
+      unresolved(3, 5, 'league-decision-required'),
+    );
+
+    const summary = accumulator.summarize()!;
+    expect(summary.runs).toBe(3);
+    expect(summary.unresolvedRankingRuns).toBe(2);
+
+    const first = summary.teams[0]!;
+    expect(first.expectedPoints).toBe(65);
+    expect(first.pointsInterval80).toEqual({ lower: 60, upper: 69 });
+    expect(first.positionDistribution[0]).toEqual({
+      position: 1,
+      count: 2,
+      probability: 2 / 3,
+      upperBound: { count: 3, probability: 1 },
+    });
+    expect(first.positionDistribution[1]).toEqual({
+      position: 2,
+      count: 0,
+      probability: 0,
+      upperBound: { count: 1, probability: 1 / 3 },
+    });
+    expect(first.zones.find(({ zone }) => zone === 'ucl')).toMatchObject({
+      count: 3,
+      probability: 1,
+    });
+    expect(first.zones.find(({ zone }) => zone === 'ucl')).not.toHaveProperty(
+      'upperBound',
+    );
+    expect(first.sharedPositionDistribution).toEqual([]);
+
+    const fourth = summary.teams[3]!;
+    expect(fourth.zones.find(({ zone }) => zone === 'ucl')).toMatchObject({
+      count: 2,
+      probability: 2 / 3,
+      upperBound: { count: 3, probability: 1 },
+    });
+    expect(fourth.zones.find(({ zone }) => zone === 'uel')).toMatchObject({
+      count: 0,
+      probability: 0,
+      upperBound: { count: 1, probability: 1 / 3 },
+    });
+    expect(fourth.zones.find(({ zone }) => zone === 'releg')).toMatchObject({
+      count: 0,
+      probability: 0,
+    });
+    expect(fourth.zones.find(({ zone }) => zone === 'releg')).not.toHaveProperty(
+      'upperBound',
+    );
+  });
+
+  it('rejects an unresolved range that misstates the competition, boundary, or reason', () => {
+    for (const [code, from, to, reason] of [
+      ['PD', 1, 2, 'play-off-required'],
+      ['PL', 8, 9, 'play-off-required'],
+      ['PL', 1, 3, 'play-off-required'],
+      ['PL', 1, 2, 'league-decision-required'],
+    ] as const) {
+      const groups = rankingWithSharedRange(from, to).map((group) =>
+        group.from === from ? { ...group, reason } : group,
+      );
+      const accumulator = createLeagueForecastAccumulator(code, 2026, ids20, 1)!;
+      expect(() => accumulator.addRun(points(), groups)).toThrow(RangeError);
+      expect(accumulator.summarize()).toBeNull();
+    }
   });
 
   it.each([

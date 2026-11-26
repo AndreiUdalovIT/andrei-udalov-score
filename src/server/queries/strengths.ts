@@ -421,7 +421,7 @@ async function loadObservedStrengthInputs(
  * result availability. One SQL snapshot covers the competition and PL/ELC
  * promotion cohorts. Season configuration scopes each training main stage.
  */
-export async function loadObservedCompetitionStrengths(
+export async function loadObservedCompetitionStrengthSnapshot(
   competitionCode: CompetitionCode,
   season: number,
   before: Date,
@@ -433,9 +433,27 @@ export async function loadObservedCompetitionStrengths(
   }
   const settings = { ...options };
   const data = await loadObservedStrengthInputs(competitionCode, season, cutoff);
-  return data === null
-    ? null
-    : calculateCompetitionStrengths(data, cutoff, settings);
+  if (data === null) return null;
+
+  return {
+    matches: data.currentMatches,
+    strengths: calculateCompetitionStrengths(data, cutoff, settings),
+  };
+}
+
+export async function loadObservedCompetitionStrengths(
+  competitionCode: CompetitionCode,
+  season: number,
+  before: Date,
+  options: PromotionAdjustmentOptions = strengthModelOptions[competitionCode],
+) {
+  const snapshot = await loadObservedCompetitionStrengthSnapshot(
+    competitionCode,
+    season,
+    before,
+    options,
+  );
+  return snapshot?.strengths ?? null;
 }
 
 export type ObservedGoalForecastRow = WalkForwardGoalRow & {

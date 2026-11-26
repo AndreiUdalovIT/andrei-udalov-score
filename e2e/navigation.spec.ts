@@ -10,7 +10,7 @@ test('sections navigate, highlight the current route and support browser history
   const leagues = navigation.getByRole('link', { name: 'Лиги', exact: true });
   await leagues.click();
   await expect(page).toHaveURL('/leagues/pl');
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Лига');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('АПЛ');
   await expect(leagues).toHaveAttribute('aria-current', 'page');
 
   const calendar = navigation.getByRole('link', { name: 'Календарь', exact: true });
@@ -28,7 +28,7 @@ test('sections navigate, highlight the current route and support browser history
 test('a direct leagues link redirects to the default league', async ({ page }) => {
   await page.goto('/leagues');
   await expect(page).toHaveURL('/leagues/pl');
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Лига');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('АПЛ');
 });
 
 test('an unknown URL returns 404 and offers a way home', async ({ page }) => {

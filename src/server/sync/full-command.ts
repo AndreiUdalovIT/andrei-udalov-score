@@ -7,7 +7,7 @@ import { loadEnvConfig } from '@next/env';
 import { parseCompetitionOptions } from './command-options';
 
 const USAGE =
-  'Usage: pnpm sync:full --competition CODE [--competition CODE ...]\n' +
+  'Usage: pnpm sync:full --competition CODE [--competition CODE ...] [--season-forecasts]\n' +
   '       pnpm sync:full --help\n\n' +
   'Syncs the current season and unique team squads for selected competitions.\n' +
   'Completed datasets remain saved if a later operation fails.';
@@ -17,6 +17,7 @@ function parseOptions(args: string[]) {
     args,
     options: {
       competition: { type: 'string', multiple: true },
+      'season-forecasts': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h' },
     },
     allowPositionals: false,
@@ -27,25 +28,29 @@ function parseOptions(args: string[]) {
     throw new Error('At least one competition is required');
   }
 
-  return values.competition.map(
-    (competition) => parseCompetitionOptions({ competition }).competitionCode,
-  );
+  return {
+    competitionCodes: values.competition.map(
+      (competition) => parseCompetitionOptions({ competition }).competitionCode,
+    ),
+    seasonForecasts: values['season-forecasts'],
+  };
 }
 
 export async function runFullCommand(args: string[]) {
-  let competitionCodes: ReturnType<typeof parseOptions>;
+  let options: ReturnType<typeof parseOptions>;
   try {
-    competitionCodes = parseOptions(args);
+    options = parseOptions(args);
   } catch {
     console.error(`Invalid arguments.\n${USAGE}`);
     return 2;
   }
 
-  if (!competitionCodes) {
+  if (!options) {
     console.log(USAGE);
     return 0;
   }
 
+  const { competitionCodes, seasonForecasts } = options;
   try {
     // Load environment variables before importing the database client.
     loadEnvConfig(process.cwd(), process.env.NODE_ENV !== 'production', {
@@ -67,6 +72,15 @@ export async function runFullCommand(args: string[]) {
       );
     }
     console.log(`Synced ${squadCount} unique team squads.`);
+    if (seasonForecasts) {
+      try {
+        const { calculateSyncedSeasonForecasts } =
+          await import('../forecasts/calculate-synced-season-forecasts');
+        await calculateSyncedSeasonForecasts(competitions);
+      } catch {
+        console.warn('Season forecast calculation could not be started.');
+      }
+    }
     return 0;
   } catch (error) {
     // Import and environment errors can also contain connection details.

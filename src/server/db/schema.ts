@@ -3,6 +3,7 @@
 // primary key: upserts need no lookups, and `/teams/57` is the row with id 57.
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   check,
   date,
   index,
@@ -15,10 +16,13 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 
+import type { StoredChampionsLeagueForecast } from '@/lib/model/champions-league-knockout-snapshot';
 import type { ExpectedGoals } from '@/lib/model/expected-goals';
+import type { LeagueSimulationResult } from '@/lib/model/league-simulation';
 import type { MatchProbabilities } from '@/lib/model/match-probabilities';
 import type { PoissonDistributionOptions } from '@/lib/model/poisson-distribution';
 import type { PromotionAdjustmentOptions } from '@/lib/model/promotion-adjustment';
+import type { RandomSeed } from '@/lib/model/seeded-random';
 import type { MatchDuration, MatchStatus } from '@/lib/types/football';
 
 export const competitions = pgTable('competitions', {
@@ -230,6 +234,69 @@ export const predictions = pgTable(
       sql`jsonb_typeof(${t.expectedGoals}) = 'object'
         and jsonb_typeof(${t.probabilities}) = 'object'
         and jsonb_typeof(${t.modelOptions}) = 'object'`,
+    ),
+  ],
+);
+
+export type SeasonForecastKind = 'league-table' | 'champions-league-stages';
+
+/** Completed season forecasts with their reproducibility metadata. */
+export const seasonForecasts = pgTable(
+  'season_forecasts',
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    competitionId: integer()
+      .notNull()
+      .references(() => competitions.id),
+    season: integer().notNull(),
+    kind: text().$type<SeasonForecastKind>().notNull(),
+    modelVersion: text().notNull(),
+    dataCutoff: timestamp({ withTimezone: true }).notNull(),
+    calculatedAt: timestamp({ withTimezone: true }).notNull(),
+    recordedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .default(sql`clock_timestamp()`),
+    seed: bigint({ mode: 'number' }).array(4).$type<RandomSeed>().notNull(),
+    runs: integer().notNull(),
+    forecast: jsonb()
+      .$type<LeagueSimulationResult | StoredChampionsLeagueForecast>()
+      .notNull(),
+  },
+  (t) => [
+    index('season_forecasts_lookup_idx').on(
+      t.competitionId,
+      t.season,
+      t.kind,
+      t.dataCutoff,
+      t.calculatedAt,
+      t.id,
+    ),
+    check(
+      'season_forecasts_kind_check',
+      sql`${t.kind} in ('league-table', 'champions-league-stages')`,
+    ),
+    check('season_forecasts_version_check', sql`btrim(${t.modelVersion}) <> ''`),
+    check(
+      'season_forecasts_season_runs_check',
+      sql`${t.season} > 0 and ${t.runs} > 0`,
+    ),
+    check(
+      'season_forecasts_times_check',
+      sql`isfinite(${t.dataCutoff}) and isfinite(${t.calculatedAt}) and isfinite(${t.recordedAt})
+        and ${t.dataCutoff} <= ${t.calculatedAt} and ${t.calculatedAt} <= ${t.recordedAt}`,
+    ),
+    check(
+      'season_forecasts_seed_check',
+      sql`case when array_ndims(${t.seed}) = 1 then
+        array_lower(${t.seed}, 1) = 1 and cardinality(${t.seed}) = 4
+        and array_position(${t.seed}, null) is null
+        and 0 <= all(${t.seed}) and 4294967295 >= all(${t.seed})
+        and 0 < any(${t.seed})
+        else false end`,
+    ),
+    check(
+      'season_forecasts_payload_check',
+      sql`jsonb_typeof(${t.forecast}) = 'object'`,
     ),
   ],
 );

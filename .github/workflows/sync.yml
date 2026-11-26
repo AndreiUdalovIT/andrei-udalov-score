@@ -120,6 +120,9 @@ jobs:
           for competition in "${competitions[@]}"; do
             args+=(--competition "$competition")
           done
+          if [[ "$SYNC_MODE" == full ]]; then
+            args+=(--season-forecasts)
+          fi
           pnpm "sync:$SYNC_MODE" "${args[@]}"
 
       - name: Revalidate application cache
